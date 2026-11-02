@@ -5,8 +5,8 @@ Status: foundation implementation complete; live SQL Server and OIDC-provider ch
 
 ## 1. Frozen reference
 
-- Foundation commit SHA: `cfd89c45717880765a6177426096e4de1d5da1c3`
-- The handoff document is the follow-up documentation commit after that frozen foundation.
+- Frozen foundation reference commit: `475a72bc67dbf9cfbcfac2126afa8423aa7099f7`
+- The handoff document is updated in the follow-up documentation commit after that frozen foundation.
 - Ten bounded agents ran in parallel for domain, scoring, identity, EF, SQL, API identity, Python scoring, contracts, isolation tests and build/CI review. The host did not run all 20 logical specialist roles.
 
 ## 2. Toolchain and commands
@@ -27,7 +27,7 @@ Commands actually run from the repository root:
 .tools\dotnet\dotnet.exe build AdPulse.sln --configuration Release --no-restore --verbosity minimal
   PASS: 0 warnings, 0 errors
 .tools\dotnet\dotnet.exe test AdPulse.sln --configuration Release --no-build --no-restore
-  PASS: Domain 21, Infrastructure 12, API 13; 46 passed, 0 failed
+  PASS: Domain 21, Infrastructure 13, API 13; 47 passed, 0 failed
 python -m pytest -q                                             PASS: 13 passed
 python -m compileall -q adpulse_scoring tests                    PASS
 JSON contract parse and four-fixture load                         PASS
@@ -96,7 +96,7 @@ GitHub Actions was configured in `.github/workflows/dotnet.yml` but was not exec
 
 ## 9. Phase 2 dependency order
 
-1. Verify this handoff and `cfd89c45717880765a6177426096e4de1d5da1c3`; provision SQL Server and OIDC test configuration.
+1. Verify this handoff and `475a72bc67dbf9cfbcfac2126afa8423aa7099f7`; provision SQL Server and OIDC test configuration.
 2. Wire bearer authentication, tenant membership resolution, tenant-scoped DbContext creation, correlation/problem details and protected API authorization tests.
 3. Implement campaign CRUD, daily metric ingestion, pagination and import validation against `api-v1`; retain the negative isolation suite.
 4. Integrate the Python `scoring-v1` client with timeout/retry semantics, persist idempotent alerts, and implement alert lifecycle/audit writes.
