@@ -185,8 +185,7 @@ public sealed record ScoredAlert(
 
         if (string.IsNullOrWhiteSpace(Fingerprint)
             || Fingerprint.Length != 64
-            || Fingerprint.Any(character => !Uri.IsHexDigit(character))
-            || Fingerprint != Fingerprint.ToLowerInvariant())
+            || Fingerprint.Any(character => character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
         {
             throw new AlertValidationException("Fingerprint must be a lowercase 64-character SHA-256 value.");
         }

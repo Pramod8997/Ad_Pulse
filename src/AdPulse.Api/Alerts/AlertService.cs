@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using AdPulse.Domain.Tenancy;
 using AdPulse.Infrastructure.Data;
@@ -263,17 +264,17 @@ public sealed class AlertService(AdPulseDbContext db)
     {
         if (query.Status is not null)
         {
-            alerts = alerts.Where(alert => alert.Status.ToLower() == query.Status);
+            alerts = alerts.Where(alert => alert.Status == query.Status);
         }
 
         if (query.Severity is not null)
         {
-            alerts = alerts.Where(alert => alert.Severity.ToLower() == query.Severity);
+            alerts = alerts.Where(alert => alert.Severity == query.Severity);
         }
 
         if (query.Metric is not null)
         {
-            alerts = alerts.Where(alert => alert.MetricName.ToLower() == query.Metric);
+            alerts = alerts.Where(alert => alert.MetricName == query.Metric);
         }
 
         if (query.CampaignId is not null)
@@ -385,6 +386,6 @@ internal sealed record AlertCursor(DateTimeOffset DetectedAt, Guid Id, string Fi
         query.Severity ?? string.Empty,
         query.Metric ?? string.Empty,
         query.CampaignId?.ToString("D") ?? string.Empty,
-        query.From?.ToString("yyyy-MM-dd") ?? string.Empty,
-        query.To?.ToString("yyyy-MM-dd") ?? string.Empty);
+        query.From?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+        query.To?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty);
 }
