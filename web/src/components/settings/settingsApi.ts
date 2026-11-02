@@ -35,7 +35,7 @@ function normalize(value: unknown): TenantSettingsResponse {
     reportingCurrency: stringValue(item.reportingCurrency),
     createdAt: stringValue(item.createdAt),
     updatedAtUtc: stringValue(item.updatedAtUtc ?? item.updatedAt),
-    canEdit: item.canEdit !== false,
+    canEdit: typeof item.canEdit === 'boolean' ? item.canEdit : undefined,
     stale: item.stale === true,
   }
 }
