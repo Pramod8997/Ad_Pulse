@@ -60,8 +60,8 @@ const numberFormatter = computed(() => new Intl.NumberFormat(undefined, {
 
 function formatValue(value: number | null): string { return value === null ? '—' : numberFormatter.value.format(value) }
 function formatDate(value: string): string {
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: props.timezone }).format(date)
+  const date = new Date(`${value}T00:00:00Z`)
+  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
 }
 function pointSummary(point: OverviewTrendPoint): string {
   return `${formatDate(point.date)}: spend ${formatValue(point.spend)}, revenue ${formatValue(point.revenue)}`
