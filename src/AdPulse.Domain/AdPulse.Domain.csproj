@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>AdPulse.Domain</AssemblyName>
+    <RootNamespace>AdPulse.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://adpulse.local/contracts/scoring-v1.schema.json",
+  "title": "AdPulse scoring v1",
+  "$comment": "Normative request schema for POST /v1/score. Decimal values are canonical JSON strings. Cross-field evidence-window ordering is validated by the scorer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "campaign_id",
+    "metric_name",
+    "observed",
+    "baseline",
+    "data_points",
+    "minimum_data_points",
+    "direction",
+    "evidence_window_start",
+    "evidence_window_end"
+  ],
+  "properties": {
+    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^|]+$" },
+    "campaign_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^|]+$" },
+    "metric_name": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^|]+$" },
+    "observed": { "type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$" },
+    "baseline": { "type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$" },
+    "data_points": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "minimum_data_points": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "direction": { "enum": ["higher_is_better", "lower_is_better"] },
+    "evidence_window_start": { "type": "string", "format": "date" },
+    "evidence_window_end": { "type": "string", "format": "date" },
+    "scoring_version": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[^|]+$", "default": "scoring-v1" }
+  }
+}
