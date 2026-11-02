@@ -31,8 +31,8 @@ function money(value: number | null, currency: string | null): string {
 function number(value: number | null): string { return value === null ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value) }
 function date(value: string | null): string {
   if (!value) return '—'
-  const parsed = new Date(`${value}T00:00:00`)
-  return Number.isNaN(parsed.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parsed)
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return Number.isNaN(parsed.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(parsed)
 }
 </script>
 
@@ -45,14 +45,14 @@ function date(value: string | null): string {
         <table>
           <caption class="sr-only">Campaign performance, sortable by column</caption>
           <thead><tr>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by campaign, ${sortLabel('campaignName')}`" @click="setSort('campaignName')">Campaign <span aria-hidden="true">{{ sortKey === 'campaignName' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</span></button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by status, ${sortLabel('status')}`" @click="setSort('status')">Status</button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by budget, ${sortLabel('budget')}`" @click="setSort('budget')">Budget</button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by spend, ${sortLabel('spend')}`" @click="setSort('spend')">Spend</button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by CPC, ${sortLabel('cpc')}`" @click="setSort('cpc')">CPC</button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by CPA, ${sortLabel('cpa')}`" @click="setSort('cpa')">CPA</button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by ROAS, ${sortLabel('roas')}`" @click="setSort('roas')">ROAS</button></th>
-            <th scope="col"><button type="button" class="sort-button" :aria-label="`Sort by last metric date, ${sortLabel('lastMetricDate')}`" @click="setSort('lastMetricDate')">Last metric</button></th>
+            <th scope="col" :aria-sort="sortKey === 'campaignName' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by campaign, ${sortLabel('campaignName')}`" @click="setSort('campaignName')">Campaign</button></th>
+            <th scope="col" :aria-sort="sortKey === 'status' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by status, ${sortLabel('status')}`" @click="setSort('status')">Status</button></th>
+            <th scope="col" :aria-sort="sortKey === 'budget' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by budget, ${sortLabel('budget')}`" @click="setSort('budget')">Budget</button></th>
+            <th scope="col" :aria-sort="sortKey === 'spend' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by spend, ${sortLabel('spend')}`" @click="setSort('spend')">Spend</button></th>
+            <th scope="col" :aria-sort="sortKey === 'cpc' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by CPC, ${sortLabel('cpc')}`" @click="setSort('cpc')">CPC</button></th>
+            <th scope="col" :aria-sort="sortKey === 'cpa' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by CPA, ${sortLabel('cpa')}`" @click="setSort('cpa')">CPA</button></th>
+            <th scope="col" :aria-sort="sortKey === 'roas' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by ROAS, ${sortLabel('roas')}`" @click="setSort('roas')">ROAS</button></th>
+            <th scope="col" :aria-sort="sortKey === 'lastMetricDate' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by last metric date, ${sortLabel('lastMetricDate')}`" @click="setSort('lastMetricDate')">Last metric</button></th>
           </tr></thead>
           <tbody><tr v-for="row in pageRows" :key="row.campaignId"><th scope="row">{{ row.campaignName }}</th><td>{{ row.status || '—' }}</td><td>{{ money(row.budget, row.currency) }}</td><td>{{ money(row.spend, row.currency) }}</td><td>{{ money(row.cpc, row.currency) }}</td><td>{{ money(row.cpa, row.currency) }}</td><td>{{ number(row.roas) }}</td><td>{{ date(row.lastMetricDate) }}</td></tr></tbody>
         </table>
