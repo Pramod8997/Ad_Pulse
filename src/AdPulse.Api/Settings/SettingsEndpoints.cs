@@ -9,7 +9,9 @@ namespace AdPulse.Api.Settings;
 public static class SettingsEndpoints
 {
     public static IServiceCollection AddTenantSettingsServices(this IServiceCollection services) =>
-        services.AddScoped<TenantSettingsService>();
+        services
+            .AddScoped<ITenantSettingsStore, EfTenantSettingsStore>()
+            .AddScoped<TenantSettingsService>();
 
     public static RouteGroupBuilder MapTenantSettingsEndpoints(this IEndpointRouteBuilder endpoints)
     {

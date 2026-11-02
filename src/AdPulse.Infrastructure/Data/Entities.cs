@@ -21,6 +21,15 @@ public sealed class Membership : ITenantOwned
     public Tenant? Tenant { get; set; }
 }
 
+public sealed class TenantSetting : ITenantOwned
+{
+    public string TenantId { get; set; } = string.Empty;
+    public string ReportingTimeZone { get; set; } = string.Empty;
+    public string? DefaultCurrency { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+    public Tenant? Tenant { get; set; }
+}
+
 public sealed class Campaign : ITenantOwned
 {
     public string TenantId { get; set; } = string.Empty;

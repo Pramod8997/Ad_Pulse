@@ -10,6 +10,7 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
 
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Membership> Memberships => Set<Membership>();
+    public DbSet<TenantSetting> TenantSettings => Set<TenantSetting>();
     public DbSet<Campaign> Campaigns => Set<Campaign>();
     public DbSet<DailyMetric> DailyMetrics => Set<DailyMetric>();
     public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
@@ -42,6 +43,24 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
                 .HasForeignKey(x => x.TenantId)
                 .HasPrincipalKey(x => x.Id)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasQueryFilter(x => Scope.IsSystemScope || x.TenantId == Scope.TenantId);
+        });
+
+        modelBuilder.Entity<TenantSetting>(entity =>
+        {
+            entity.HasKey(x => x.TenantId);
+            entity.Property(x => x.TenantId).HasMaxLength(64);
+            entity.Property(x => x.ReportingTimeZone).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.DefaultCurrency).HasColumnType("char(3)");
+            entity.Property(x => x.UpdatedAtUtc).HasPrecision(0);
+            entity.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .HasPrincipalKey(x => x.Id)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_TenantSettings_Currency",
+                "DefaultCurrency IS NULL OR DefaultCurrency COLLATE Latin1_General_100_BIN2 LIKE '[A-Z][A-Z][A-Z]'"));
             entity.HasQueryFilter(x => Scope.IsSystemScope || x.TenantId == Scope.TenantId);
         });
 
