@@ -566,12 +566,11 @@ internal sealed class WorkflowApiContractDouble : HttpMessageHandler
         });
     }
 
+    private static readonly JsonSerializerOptions ResponseJson = new(JsonSerializerDefaults.Web);
+
     private static HttpResponseMessage Response(HttpStatusCode status, object body) => new(status)
     {
-        Content = new StringContent(JsonSerializer.Serialize(body, new JsonSerializerOptions(JsonSerializerDefaults.Web)
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        }), Encoding.UTF8, "application/json")
+        Content = new StringContent(JsonSerializer.Serialize(body, ResponseJson), Encoding.UTF8, "application/json")
     };
 
     private sealed class WorkflowTenant
@@ -644,6 +643,8 @@ internal sealed class WorkflowApiContractDouble : HttpMessageHandler
 
 internal static class WorkflowHttpClientExtensions
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     public static Task<HttpResponseMessage> PatchJsonAsync<T>(this HttpClient client, string uri, T value) =>
         client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, uri) { Content = JsonContent(value) });
 
@@ -651,7 +652,7 @@ internal static class WorkflowHttpClientExtensions
         client.SendAsync(new HttpRequestMessage(HttpMethod.Put, uri) { Content = JsonContent(value) });
 
     private static StringContent JsonContent<T>(T value) => new(
-        JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+        JsonSerializer.Serialize(value, JsonOptions),
         Encoding.UTF8,
         "application/json");
 }

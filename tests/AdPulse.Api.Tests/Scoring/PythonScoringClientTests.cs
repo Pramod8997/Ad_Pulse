@@ -18,7 +18,7 @@ public sealed class PythonScoringClientTests
         var handler = new RecordingHandler((request, _) =>
         {
             sentRequest = request;
-            sentBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            sentBody = request.Content!.ReadAsStringAsync(CancellationToken.None).GetAwaiter().GetResult();
             return Task.FromResult(JsonResponse("""
                 {"score":"12.3451","severity":"low","confidence":"1.0000","data_sufficiency":"sufficient","reason_codes":["degraded_vs_baseline"],"fingerprint":"cf567acbd1230f8caccdbb8e8c3c0a8d954ea2b8d39ffa3a593f1c101ad5c63f"}
                 """));
