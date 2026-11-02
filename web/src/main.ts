@@ -1,7 +1,7 @@
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createPinia } from 'pinia'
 import { createApp, defineComponent, h } from 'vue'
-import { RouterView } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 
 import { createAppRouter } from './router'
 import AppShell from './layouts/AppShell.vue'
@@ -22,7 +22,10 @@ const queryClient = new QueryClient({
 const AppRoot = defineComponent({
   name: 'AppRoot',
   setup() {
-    return () => h(AppShell, null, { default: () => h(RouterView) })
+    const route = useRoute()
+    return () => route.meta.requiresAuth
+      ? h(AppShell, null, { default: () => h(RouterView) })
+      : h(RouterView)
   },
 })
 
