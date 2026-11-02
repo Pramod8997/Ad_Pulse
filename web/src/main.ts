@@ -4,6 +4,7 @@ import { createApp, defineComponent, h } from 'vue'
 import { RouterView } from 'vue-router'
 
 import { createAppRouter } from './router'
+import AppShell from './layouts/AppShell.vue'
 import './styles/index.css'
 
 const pinia = createPinia()
@@ -21,7 +22,7 @@ const queryClient = new QueryClient({
 const AppRoot = defineComponent({
   name: 'AppRoot',
   setup() {
-    return () => h(RouterView)
+    return () => h(AppShell, null, { default: () => h(RouterView) })
   },
 })
 

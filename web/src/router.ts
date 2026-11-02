@@ -3,6 +3,13 @@ import type { Pinia } from 'pinia'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import { useAuthStore } from './stores/auth'
+import AlertsView from './views/AlertsView.vue'
+import AuditView from './views/AuditView.vue'
+import CampaignDetailView from './views/CampaignDetailView.vue'
+import CampaignsView from './views/CampaignsView.vue'
+import ImportsView from './views/ImportsView.vue'
+import OverviewView from './views/OverviewView.vue'
+import SettingsView from './views/SettingsView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -26,43 +33,43 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/app',
     name: 'overview',
-    component: RouteOutlet,
+    component: OverviewView,
     meta: { requiresAuth: true },
   },
   {
     path: '/app/campaigns',
     name: 'campaigns',
-    component: RouteOutlet,
+    component: CampaignsView,
     meta: { requiresAuth: true },
   },
   {
     path: '/app/campaigns/:id',
     name: 'campaign-detail',
-    component: RouteOutlet,
+    component: CampaignDetailView,
     meta: { requiresAuth: true },
   },
   {
     path: '/app/alerts',
     name: 'alerts',
-    component: RouteOutlet,
+    component: AlertsView,
     meta: { requiresAuth: true },
   },
   {
     path: '/app/imports',
     name: 'imports',
-    component: RouteOutlet,
+    component: ImportsView,
     meta: { requiresAuth: true, requiredPermission: 'import' },
   },
   {
     path: '/app/audit',
     name: 'audit',
-    component: RouteOutlet,
+    component: AuditView,
     meta: { requiresAuth: true, requiredPermission: 'audit' },
   },
   {
     path: '/app/settings',
     name: 'settings',
-    component: RouteOutlet,
+    component: SettingsView,
     meta: { requiresAuth: true, requiredRole: 'tenant-admin' },
   },
 ]
