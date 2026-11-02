@@ -36,6 +36,9 @@ public sealed class AlertContractsTests
         Assert.Throws<AlertValidationException>(() => new AlertMutationRequest(true, " ").ValidateAndGetReason(true));
         Assert.Throws<AlertValidationException>(() => new AlertMutationRequest(true, new string('x', 501)).ValidateAndGetReason());
         Assert.Equal("operator reviewed", new AlertMutationRequest(true, " operator reviewed ").ValidateAndGetReason());
+        Assert.Throws<AlertValidationException>(() => new AlertStatusChangeRequest("acknowledged", "reason").Validate());
+        Assert.Equal(("acknowledged", "reason"), new AlertStatusChangeRequest(" acknowledged ", " reason ", true).Validate());
+        Assert.Throws<AlertValidationException>(() => new AlertStatusChangeRequest("resolved", null, true).Validate());
     }
 
     [Fact]
