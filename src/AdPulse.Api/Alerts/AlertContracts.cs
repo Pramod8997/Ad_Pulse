@@ -94,7 +94,7 @@ public sealed record AlertMutationRequest(bool Confirm, string? Reason)
     }
 }
 
-public sealed record AlertStatusChangeRequest(string Status, string? Reason = null)
+public sealed record AlertStatusChangeRequest(string Status, string? Reason = null, bool Confirm = false)
 {
     public (string Status, string? Reason) Validate()
     {
@@ -108,6 +108,11 @@ public sealed record AlertStatusChangeRequest(string Status, string? Reason = nu
         if (reason is not null && reason.Length > 500)
         {
             throw new AlertValidationException("Reason must be at most 500 characters.");
+        }
+
+        if (!Confirm)
+        {
+            throw new AlertValidationException("Confirmation is required for an alert status change.");
         }
 
         if (status == AlertStatuses.Resolved && string.IsNullOrWhiteSpace(reason))
