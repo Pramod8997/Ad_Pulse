@@ -9,6 +9,11 @@ public static class TenantClaimScope
     {
         ArgumentNullException.ThrowIfNull(principal);
 
+        if (principal.Identity?.IsAuthenticated != true)
+        {
+            throw new TenantAccessDeniedException("An authenticated identity is required.");
+        }
+
         var claims = principal.FindAll("tenant_id").ToArray();
         if (claims.Length != 1)
         {

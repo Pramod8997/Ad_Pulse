@@ -35,6 +35,14 @@ public sealed class TenantClaimScopeTests
         Assert.Throws<TenantAccessDeniedException>(() => TenantClaimScope.Create(principal));
     }
 
+    [Fact]
+    public void Rejects_claims_from_an_unauthenticated_identity()
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim("tenant_id", "tenant-a")]));
+
+        Assert.Throws<TenantAccessDeniedException>(() => TenantClaimScope.Create(principal));
+    }
+
     private static ClaimsPrincipal Principal(string tenantId) => new(new ClaimsIdentity(
         [new Claim("tenant_id", tenantId)],
         "test"));
