@@ -132,7 +132,7 @@ public static class CampaignValidation
 
     public static string NormalizedStatus(string status) => status.Trim().ToLowerInvariant();
 
-    private static void Add(IDictionary<string, List<string>> errors, string field, string message)
+    private static void Add(Dictionary<string, List<string>> errors, string field, string message)
     {
         if (!errors.TryGetValue(field, out var messages))
         {

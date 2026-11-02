@@ -31,8 +31,8 @@ public static class AlertEndpoints
         ExecuteAsync(
             httpContext,
             tenantResolver,
-            cancellationToken,
-            tenant => service.ListAsync(tenant, query, cancellationToken));
+            tenant => service.ListAsync(tenant, query, cancellationToken),
+            cancellationToken);
 
     private static Task<IResult> GetAsync(
         Guid id,
@@ -43,8 +43,8 @@ public static class AlertEndpoints
         ExecuteAsync(
             httpContext,
             tenantResolver,
-            cancellationToken,
-            tenant => service.GetAsync(tenant, id, cancellationToken));
+            tenant => service.GetAsync(tenant, id, cancellationToken),
+            cancellationToken);
 
     private static Task<IResult> AcknowledgeAsync(
         Guid id,
@@ -56,8 +56,8 @@ public static class AlertEndpoints
         ExecuteAsync(
             httpContext,
             tenantResolver,
-            cancellationToken,
-            tenant => service.AcknowledgeAsync(tenant, id, request!, cancellationToken));
+            tenant => service.AcknowledgeAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
 
     private static Task<IResult> ChangeStatusAsync(
         Guid id,
@@ -69,8 +69,8 @@ public static class AlertEndpoints
         ExecuteAsync(
             httpContext,
             tenantResolver,
-            cancellationToken,
-            tenant => service.ChangeStatusAsync(tenant, id, request!, cancellationToken));
+            tenant => service.ChangeStatusAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
 
     private static Task<IResult> ResolveAsync(
         Guid id,
@@ -82,8 +82,8 @@ public static class AlertEndpoints
         ExecuteAsync(
             httpContext,
             tenantResolver,
-            cancellationToken,
-            tenant => service.ResolveAsync(tenant, id, request!, cancellationToken));
+            tenant => service.ResolveAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
 
     private static Task<IResult> ReopenAsync(
         Guid id,
@@ -95,14 +95,14 @@ public static class AlertEndpoints
         ExecuteAsync(
             httpContext,
             tenantResolver,
-            cancellationToken,
-            tenant => service.ReopenAsync(tenant, id, request!, cancellationToken));
+            tenant => service.ReopenAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
 
     private static async Task<IResult> ExecuteAsync<T>(
         HttpContext httpContext,
         TenantContextResolver tenantResolver,
-        CancellationToken cancellationToken,
-        Func<TenantContext, Task<T>> operation)
+        Func<TenantContext, Task<T>> operation,
+        CancellationToken cancellationToken)
     {
         try
         {
