@@ -66,6 +66,18 @@ BEGIN TRY
         VALUES (@NorthstarTenantId, N'demo-user-northstar', N'tenant_admin');
     END;
 
+    IF NOT EXISTS (SELECT 1 FROM dbo.TenantSettings WHERE TenantId = @AcmeTenantId)
+    BEGIN
+        INSERT dbo.TenantSettings (TenantId, ReportingTimeZone, DefaultCurrency, UpdatedAtUtc)
+        VALUES (@AcmeTenantId, N'UTC', 'USD', CAST('2026-01-01T00:00:00+00:00' AS datetimeoffset(0)));
+    END;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.TenantSettings WHERE TenantId = @NorthstarTenantId)
+    BEGIN
+        INSERT dbo.TenantSettings (TenantId, ReportingTimeZone, DefaultCurrency, UpdatedAtUtc)
+        VALUES (@NorthstarTenantId, N'UTC', 'EUR', CAST('2026-01-01T00:00:00+00:00' AS datetimeoffset(0)));
+    END;
+
     IF NOT EXISTS (SELECT 1 FROM dbo.Campaigns WHERE TenantId = @AcmeTenantId AND Id = @AcmeCampaignId)
     BEGIN
         INSERT dbo.Campaigns
