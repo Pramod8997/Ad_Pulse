@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
+import { useAuthStore } from '../stores/auth'
 import SettingsForm, {
   type SettingDefinition,
   type SettingValue,
@@ -20,6 +21,7 @@ type ViewState = 'loading' | 'ready' | 'empty' | 'error' | 'forbidden' | 'unauth
 
 const api = inject<TenantSettingsApi | undefined>('adpulse-api')
 const settingsApi: SettingsApi = api?.settings ?? createSettingsApi()
+const auth = useAuthStore()
 const settings = ref<SettingDefinition[]>([])
 const canEdit = ref(false)
 const updatedAt = ref('')
@@ -68,7 +70,7 @@ function applyResponse(result: TenantSettingsResponse) {
       required: true,
     },
   ]
-  canEdit.value = result.canEdit !== false
+  canEdit.value = result.canEdit ?? auth.hasRole('tenant-admin')
   updatedAt.value = result.updatedAtUtc ?? new Date().toISOString()
   stale.value = result.stale === true || isOlderThanFiveMinutes(result.updatedAtUtc)
   state.value = 'ready'
