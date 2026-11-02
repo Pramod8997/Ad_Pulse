@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security;
 using System.Text;
@@ -12,8 +11,6 @@ namespace AdPulse.Api.Imports;
 
 public sealed class ImportWorkflow
 {
-    private static readonly ConcurrentDictionary<PendingImportKey, PendingImport> PendingImports = new();
-    private static readonly TimeSpan StagingLifetime = TimeSpan.FromMinutes(30);
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     private readonly CsvImportParser _parser;
@@ -37,8 +34,6 @@ public sealed class ImportWorkflow
     {
         EnsureTenantScope(db, tenant);
         ArgumentNullException.ThrowIfNull(content);
-        RemoveExpiredStaging(DateTimeOffset.UtcNow);
-
         var csv = _parser.Parse(await ReadUtf8Async(content, cancellationToken));
         var safeFileName = SafeFileName(fileName);
         var rejections = new Dictionary<int, ImportRowRejection>();
@@ -73,7 +68,7 @@ public sealed class ImportWorkflow
             .Select(group => group.Key)
             .ToHashSet();
         var acceptedKeys = new HashSet<MetricKey>();
-        var accepted = new List<ImportMetricRow>(candidates.Count);
+        var accepted = new List<ImportMetricCandidate>(candidates.Count);
 
         foreach (var candidate in candidates)
         {
@@ -118,7 +113,7 @@ public sealed class ImportWorkflow
                 continue;
             }
 
-            accepted.Add(candidate.ToMetricRow());
+            accepted.Add(candidate);
         }
 
         var orderedRejections = rejections.Values.OrderBy(x => x.RowNumber).ToArray();
@@ -143,16 +138,20 @@ public sealed class ImportWorkflow
             ErrorCode = error.ErrorCode,
             Message = error.Message
         }));
-        await db.SaveChangesAsync(cancellationToken);
-
-        if (accepted.Count > 0)
+        db.ImportPendingMetrics.AddRange(accepted.Select(row => new ImportPendingMetric
         {
-            PendingImports[new PendingImportKey(tenant.TenantId, batch.Id)] = new PendingImport(
-                tenant.TenantId,
-                batch.Id,
-                DateTimeOffset.UtcNow.Add(StagingLifetime),
-                accepted);
-        }
+            TenantId = tenant.TenantId,
+            ImportBatchId = batch.Id,
+            RowNumber = row.RowNumber,
+            CampaignId = row.CampaignId,
+            MetricDate = row.MetricDate,
+            Spend = row.Spend,
+            Revenue = row.Revenue,
+            Impressions = row.Impressions,
+            Clicks = row.Clicks,
+            Conversions = row.Conversions
+        }));
+        await db.SaveChangesAsync(cancellationToken);
 
         return new ImportResult(
             batch.Id,
@@ -171,8 +170,6 @@ public sealed class ImportWorkflow
         CancellationToken cancellationToken = default)
     {
         EnsureTenantScope(db, tenant);
-        RemoveExpiredStaging(DateTimeOffset.UtcNow);
-
         var batch = await db.ImportBatches
             .SingleOrDefaultAsync(x => x.Id == importBatchId, cancellationToken);
         if (batch is null)
@@ -191,16 +188,19 @@ public sealed class ImportWorkflow
             throw new ImportConflictException("The import is not available for confirmation.");
         }
 
-        if (!PendingImports.TryGetValue(new PendingImportKey(tenant.TenantId, batch.Id), out var pending)
-            || pending.ExpiresAt <= DateTimeOffset.UtcNow)
+        var pending = await db.ImportPendingMetrics
+            .Where(x => x.ImportBatchId == batch.Id)
+            .OrderBy(x => x.RowNumber)
+            .ToArrayAsync(cancellationToken);
+        if (pending.Length == 0 && batch.AcceptedRows > 0)
         {
             throw new ImportConflictException("The validation result is no longer available; upload the file again.");
         }
 
         var currentKeys = await LoadExistingMetricKeysAsync(
             db,
-            pending.Rows.Select(row => new ImportMetricCandidate(
-                0,
+            pending.Select(row => new ImportMetricCandidate(
+                row.RowNumber,
                 row.CampaignId,
                 row.MetricDate,
                 string.Empty,
@@ -215,7 +215,7 @@ public sealed class ImportWorkflow
             throw new ImportConflictException("The import changed before confirmation; upload the file again.");
         }
 
-        foreach (var row in pending.Rows)
+        foreach (var row in pending)
         {
             db.DailyMetrics.Add(new DailyMetric
             {
@@ -231,6 +231,7 @@ public sealed class ImportWorkflow
         }
 
         batch.Status = ImportContract.CompletedStatus;
+        db.ImportPendingMetrics.RemoveRange(pending);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -239,8 +240,6 @@ public sealed class ImportWorkflow
         {
             throw new ImportConflictException("The import changed before confirmation; upload the file again.");
         }
-
-        PendingImports.TryRemove(new PendingImportKey(tenant.TenantId, batch.Id), out _);
         return ToResult(batch, errors);
     }
 
@@ -392,25 +391,6 @@ public sealed class ImportWorkflow
         }
     }
 
-    private static void RemoveExpiredStaging(DateTimeOffset now)
-    {
-        foreach (var item in PendingImports)
-        {
-            if (item.Value.ExpiresAt <= now)
-            {
-                PendingImports.TryRemove(item.Key, out _);
-            }
-        }
-    }
-
     private readonly record struct MetricKey(Guid CampaignId, DateOnly MetricDate);
-
-    private readonly record struct PendingImportKey(string TenantId, Guid ImportBatchId);
-
-    private sealed record PendingImport(
-        string TenantId,
-        Guid ImportBatchId,
-        DateTimeOffset ExpiresAt,
-        IReadOnlyList<ImportMetricRow> Rows);
 
 }

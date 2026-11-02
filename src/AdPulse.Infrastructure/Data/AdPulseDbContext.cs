@@ -15,6 +15,7 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
     public DbSet<DailyMetric> DailyMetrics => Set<DailyMetric>();
     public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
     public DbSet<ImportRowError> ImportRowErrors => Set<ImportRowError>();
+    public DbSet<ImportPendingMetric> ImportPendingMetrics => Set<ImportPendingMetric>();
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
@@ -151,6 +152,25 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
                 .HasPrincipalKey(x => new { x.TenantId, x.Id })
                 .OnDelete(DeleteBehavior.Cascade);
             entity.ToTable(table => table.HasCheckConstraint("CK_ImportRowErrors_RowNumber", "RowNumber > 0"));
+            entity.HasQueryFilter(x => Scope.IsSystemScope || x.TenantId == Scope.TenantId);
+        });
+
+        modelBuilder.Entity<ImportPendingMetric>(entity =>
+        {
+            entity.HasKey(x => new { x.TenantId, x.ImportBatchId, x.RowNumber });
+            entity.Property(x => x.TenantId).HasMaxLength(64);
+            entity.Property(x => x.Spend).HasPrecision(19, 4);
+            entity.Property(x => x.Revenue).HasPrecision(19, 4);
+            entity.HasOne(x => x.ImportBatch)
+                .WithMany(x => x.PendingMetrics)
+                .HasForeignKey(x => new { x.TenantId, x.ImportBatchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id })
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_ImportPendingMetrics_NonNegative",
+                isSqlite
+                    ? "CAST(Spend AS REAL) >= 0 AND CAST(Revenue AS REAL) >= 0 AND Impressions >= 0 AND Clicks >= 0 AND Conversions >= 0"
+                    : "Spend >= 0 AND Revenue >= 0 AND Impressions >= 0 AND Clicks >= 0 AND Conversions >= 0"));
             entity.HasQueryFilter(x => Scope.IsSystemScope || x.TenantId == Scope.TenantId);
         });
 

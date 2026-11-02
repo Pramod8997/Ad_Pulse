@@ -69,6 +69,7 @@ public sealed class ImportBatch : ITenantOwned
     public int RejectedRows { get; set; }
     public string Status { get; set; } = string.Empty;
     public ICollection<ImportRowError> RowErrors { get; } = new List<ImportRowError>();
+    public ICollection<ImportPendingMetric> PendingMetrics { get; } = new List<ImportPendingMetric>();
 }
 
 public sealed class ImportRowError : ITenantOwned
@@ -78,6 +79,21 @@ public sealed class ImportRowError : ITenantOwned
     public int RowNumber { get; set; }
     public string ErrorCode { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+    public ImportBatch? ImportBatch { get; set; }
+}
+
+public sealed class ImportPendingMetric : ITenantOwned
+{
+    public string TenantId { get; set; } = string.Empty;
+    public Guid ImportBatchId { get; set; }
+    public int RowNumber { get; set; }
+    public Guid CampaignId { get; set; }
+    public DateOnly MetricDate { get; set; }
+    public decimal Spend { get; set; }
+    public decimal Revenue { get; set; }
+    public long Impressions { get; set; }
+    public long Clicks { get; set; }
+    public long Conversions { get; set; }
     public ImportBatch? ImportBatch { get; set; }
 }
 
