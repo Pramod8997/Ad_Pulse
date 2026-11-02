@@ -7,6 +7,24 @@ namespace AdPulse.Api.Observability;
 
 public sealed class CorrelationMiddleware(RequestDelegate next, ILogger<CorrelationMiddleware> logger)
 {
+    private static readonly Action<ILogger, string, string, Exception?> RequestStarted =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Information,
+            new EventId(100, nameof(RequestStarted)),
+            "HTTP request started {HttpMethod} {HttpPath}");
+
+    private static readonly Action<ILogger, string, string, int, long, Exception?> RequestCompleted =
+        LoggerMessage.Define<string, string, int, long>(
+            LogLevel.Information,
+            new EventId(101, nameof(RequestCompleted)),
+            "HTTP request completed {HttpMethod} {HttpPath} {HttpStatusCode} {DurationMilliseconds}");
+
+    private static readonly Action<ILogger, string, string, string, long, Exception?> RequestFailed =
+        LoggerMessage.Define<string, string, string, long>(
+            LogLevel.Error,
+            new EventId(102, nameof(RequestFailed)),
+            "HTTP request failed {HttpMethod} {HttpPath} {ErrorType} {DurationMilliseconds}");
+
     public async Task InvokeAsync(HttpContext context)
     {
         var correlationId = CorrelationId.Resolve(context.Request.Headers[ObservabilityExtensions.CorrelationHeaderName].FirstOrDefault());
@@ -18,29 +36,32 @@ public sealed class CorrelationMiddleware(RequestDelegate next, ILogger<Correlat
         });
 
         var stopwatch = Stopwatch.StartNew();
-        logger.LogInformation(
-            "HTTP request started {HttpMethod} {HttpPath}",
+        RequestStarted(
+            logger,
             context.Request.Method,
-            context.Request.Path.Value ?? "/");
+            context.Request.Path.Value ?? "/",
+            null);
 
         try
         {
             await next(context);
-            logger.LogInformation(
-                "HTTP request completed {HttpMethod} {HttpPath} {HttpStatusCode} {DurationMilliseconds}",
+            RequestCompleted(
+                logger,
                 context.Request.Method,
                 context.Request.Path.Value ?? "/",
                 context.Response.StatusCode,
-                stopwatch.ElapsedMilliseconds);
+                stopwatch.ElapsedMilliseconds,
+                null);
         }
         catch (Exception exception)
         {
-            logger.LogError(
-                "HTTP request failed {HttpMethod} {HttpPath} {ErrorType} {DurationMilliseconds}",
+            RequestFailed(
+                logger,
                 context.Request.Method,
                 context.Request.Path.Value ?? "/",
                 exception.GetType().Name,
-                stopwatch.ElapsedMilliseconds);
+                stopwatch.ElapsedMilliseconds,
+                exception);
             throw;
         }
     }
