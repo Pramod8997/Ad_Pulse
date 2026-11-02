@@ -170,6 +170,9 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
                 table.HasCheckConstraint(
                     "CK_Alerts_Confidence",
                     isSqlite ? "CAST(Confidence AS REAL) >= 0 AND CAST(Confidence AS REAL) <= 1" : "Confidence >= 0 AND Confidence <= 1");
+                table.HasCheckConstraint(
+                    "CK_Alerts_ObservedBaseline",
+                    isSqlite ? "CAST(Observed AS REAL) >= 0 AND CAST(Baseline AS REAL) >= 0" : "Observed >= 0 AND Baseline >= 0");
                 table.HasCheckConstraint("CK_Alerts_DateRange", "EvidenceWindowEnd >= EvidenceWindowStart");
                 if (isSqlServer)
                 {

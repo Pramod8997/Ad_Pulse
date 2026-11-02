@@ -157,6 +157,22 @@ public sealed class TenantIsolationTests
     }
 
     [Fact]
+    public async Task Alert_observed_and_baseline_values_cannot_be_negative()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        await using var system = database.Context(TenantScope.System);
+        var campaign = Guid.NewGuid();
+        system.Campaigns.Add(Campaign("tenant-a", campaign));
+        await system.SaveChangesAsync();
+
+        var alert = Alert("tenant-a", campaign, "negative-values");
+        alert.Observed = -1m;
+        system.Alerts.Add(alert);
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => system.SaveChangesAsync());
+    }
+
+    [Fact]
     public async Task Membership_store_returns_only_roles_inside_scoped_tenant()
     {
         await using var database = await TestDatabase.CreateAsync();
