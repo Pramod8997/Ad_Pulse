@@ -10,6 +10,14 @@ internal static class ReleaseGateRepository
 
     private static string FindRoot()
     {
+        var configuredRoot = Environment.GetEnvironmentVariable("ADPULSE_REPOSITORY_ROOT");
+        if (!string.IsNullOrWhiteSpace(configuredRoot)
+            && File.Exists(Path.Combine(configuredRoot, "AdPulse.sln"))
+            && Directory.Exists(Path.Combine(configuredRoot, "contracts")))
+        {
+            return configuredRoot;
+        }
+
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
              directory is not null;
              directory = directory.Parent)
