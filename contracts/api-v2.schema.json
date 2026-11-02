@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://adpulse.local/contracts/api-v2.schema.json",
+  "title": "AdPulse API v2 workflow DTOs",
+  "$comment": "Workflow JSON uses camelCase. Tenant scope is derived from validated identity and membership, never from a request tenantId.",
+  "$defs": {
+    "date": { "type": "string", "format": "date" },
+    "utcDateTime": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "money": { "type": "number", "minimum": 0, "multipleOf": 0.0001 },
+    "nonNegativeInteger": { "type": "integer", "minimum": 0 },
+    "guid": { "type": "string", "format": "uuid" },
+    "cursor": { "type": ["string", "null"], "maxLength": 4096 },
+    "kpis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ctr", "cpc", "cpa", "roas", "budgetPacing"],
+      "properties": {
+        "ctr": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "cpc": { "type": ["number", "null"], "minimum": 0 },
+        "cpa": { "type": ["number", "null"], "minimum": 0 },
+        "roas": { "type": ["number", "null"], "minimum": 0 },
+        "budgetPacing": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "metricValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spend", "revenue", "impressions", "clicks", "conversions"],
+      "properties": {
+        "spend": { "$ref": "#/$defs/money" },
+        "revenue": { "$ref": "#/$defs/money" },
+        "impressions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "clicks": { "$ref": "#/$defs/nonNegativeInteger" },
+        "conversions": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["id", "name", "status", "currency", "budget", "startsOn", "endsOn", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/guid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "enum": ["draft", "active", "paused", "completed"] },
+        "currency": { "$ref": "#/$defs/currency" },
+        "budget": { "$ref": "#/$defs/money" },
+        "startsOn": { "$ref": "#/$defs/date" },
+        "endsOn": { "$ref": "#/$defs/date" },
+        "createdAt": { "$ref": "#/$defs/utcDateTime" }
+      }
+    },
+    "campaignListItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "status", "currency", "budget", "startsOn", "endsOn", "createdAt", "spend", "cpc", "cpa", "roas", "lastMetricDate"],
+      "properties": {
+        "id": { "$ref": "#/$defs/guid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "enum": ["draft", "active", "paused", "completed"] },
+        "currency": { "$ref": "#/$defs/currency" },
+        "budget": { "$ref": "#/$defs/money" },
+        "startsOn": { "$ref": "#/$defs/date" },
+        "endsOn": { "$ref": "#/$defs/date" },
+        "createdAt": { "$ref": "#/$defs/utcDateTime" },
+        "spend": { "type": ["number", "null"], "minimum": 0 },
+        "cpc": { "type": ["number", "null"], "minimum": 0 },
+        "cpa": { "type": ["number", "null"], "minimum": 0 },
+        "roas": { "type": ["number", "null"], "minimum": 0 },
+        "lastMetricDate": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }
+      }
+    },
+    "dailyMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["campaignId", "metricDate", "spend", "revenue", "impressions", "clicks", "conversions", "kpis"],
+      "properties": {
+        "campaignId": { "$ref": "#/$defs/guid" },
+        "metricDate": { "$ref": "#/$defs/date" },
+        "spend": { "$ref": "#/$defs/money" },
+        "revenue": { "$ref": "#/$defs/money" },
+        "impressions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "clicks": { "$ref": "#/$defs/nonNegativeInteger" },
+        "conversions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "kpis": { "$ref": "#/$defs/kpis" }
+      }
+    },
+    "importRowError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rowNumber", "errorCode", "message"],
+      "properties": {
+        "rowNumber": { "type": "integer", "minimum": 1 },
+        "errorCode": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "importBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fileName", "uploadedAt", "acceptedRows", "rejectedRows", "status", "errors"],
+      "properties": {
+        "id": { "$ref": "#/$defs/guid" },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 260 },
+        "uploadedAt": { "$ref": "#/$defs/utcDateTime" },
+        "acceptedRows": { "$ref": "#/$defs/nonNegativeInteger" },
+        "rejectedRows": { "$ref": "#/$defs/nonNegativeInteger" },
+        "status": { "enum": ["validated", "completed", "rejected", "conflict"] },
+        "errors": { "type": "array", "items": { "$ref": "#/$defs/importRowError" } }
+      }
+    },
+    "alert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "campaignId", "campaignName", "fingerprint", "metricName", "score", "severity", "status", "observed", "baseline", "confidence", "dataSufficiency", "reasonCodes", "scoringVersion", "evidenceWindowStart", "evidenceWindowEnd", "detectedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/guid" },
+        "campaignId": { "anyOf": [{ "$ref": "#/$defs/guid" }, { "type": "null" }] },
+        "campaignName": { "type": ["string", "null"] },
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "metricName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "score": { "type": "number", "minimum": 0, "maximum": 100 },
+        "severity": { "enum": ["none", "low", "medium", "high", "critical"] },
+        "status": { "enum": ["open", "acknowledged", "resolved"] },
+        "observed": { "$ref": "#/$defs/money" },
+        "baseline": { "$ref": "#/$defs/money" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "dataSufficiency": { "enum": ["insufficient", "sufficient"] },
+        "reasonCodes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "scoringVersion": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "evidenceWindowStart": { "$ref": "#/$defs/date" },
+        "evidenceWindowEnd": { "$ref": "#/$defs/date" },
+        "detectedAt": { "$ref": "#/$defs/utcDateTime" }
+      }
+    },
+    "auditEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "occurredAt", "actorSubjectId", "action", "entityType", "entityId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/guid" },
+        "occurredAt": { "$ref": "#/$defs/utcDateTime" },
+        "actorSubjectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "entityType": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "problemDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "status", "detail", "code", "correlationId"],
+      "properties": {
+        "type": { "type": "string", "format": "uri" },
+        "title": { "type": "string" },
+        "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+        "detail": { "type": "string" },
+        "instance": { "type": ["string", "null"] },
+        "code": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "errors": { "type": ["object", "null"], "additionalProperties": { "type": "array", "items": { "type": "string" } } }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "nextCursor", "hasMore", "limit"],
+      "properties": {
+        "items": { "type": "array" },
+        "nextCursor": { "$ref": "#/$defs/cursor" },
+        "hasMore": { "type": "boolean" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reportingTimeZone", "reportingCurrency", "updatedAt"],
+      "properties": {
+        "reportingTimeZone": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reportingCurrency": { "$ref": "#/$defs/currency" },
+        "updatedAt": { "$ref": "#/$defs/utcDateTime" }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "campaign": { "$ref": "#/$defs/campaign" },
+    "dailyMetric": { "$ref": "#/$defs/dailyMetric" },
+    "importBatch": { "$ref": "#/$defs/importBatch" },
+    "alert": { "$ref": "#/$defs/alert" },
+    "auditEvent": { "$ref": "#/$defs/auditEvent" },
+    "problemDetails": { "$ref": "#/$defs/problemDetails" },
+    "settings": { "$ref": "#/$defs/settings" }
+  }
+}
