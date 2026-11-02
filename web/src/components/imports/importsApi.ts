@@ -97,7 +97,7 @@ const configuredBaseUrl =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL
     ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/$/, '')
     : '';
-const DEFAULT_BASE_PATH = `${configuredBaseUrl}/v1/imports`;
+const DEFAULT_BASE_PATH = `${configuredBaseUrl}/app/imports`;
 const MAX_SAFE_TEXT_LENGTH = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

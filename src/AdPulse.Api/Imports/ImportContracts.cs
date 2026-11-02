@@ -14,7 +14,7 @@ public static class ImportContract
     public const int MaxDataRows = 100_000;
     public const int MaxStagedRows = MaxDataRows;
     public const int MaxFileNameLength = 260;
-    public const string ValidatedStatus = "validating";
+    public const string ValidatedStatus = "validated";
     public const string CompletedStatus = "completed";
     public const string RejectedStatus = "failed";
     public const string ConflictStatus = "conflict";
