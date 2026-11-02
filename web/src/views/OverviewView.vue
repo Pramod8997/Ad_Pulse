@@ -9,7 +9,12 @@ import TrendPanel from '@/components/overview/TrendPanel.vue'
 import type { OverviewData, OverviewKpi } from '@/components/overview/types'
 import { overviewErrorCorrelationId, useOverviewQuery } from '@/components/overview/overviewApi'
 
-function isoDate(date: Date): string { return date.toISOString().slice(0, 10) }
+function isoDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 function dateDaysAgo(days: number): string {
   const date = new Date()
   date.setDate(date.getDate() - days)
@@ -63,8 +68,8 @@ const kpis = computed<OverviewKpi[]>(() => {
 const displayCurrency = computed<string | null>(() => data.value?.currency || null)
 
 function formatPeriod(value: string): string {
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: timezone.value }).format(date)
+  const date = new Date(`${value}T00:00:00Z`)
+  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(date)
 }
 
 function formatUpdated(value: string | null): string {
