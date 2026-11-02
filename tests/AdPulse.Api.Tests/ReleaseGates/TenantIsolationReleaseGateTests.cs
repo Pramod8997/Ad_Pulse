@@ -26,7 +26,7 @@ public sealed class TenantIsolationReleaseGateTests
     {
         var model = ReleaseGateRepository.ReadText("src", "AdPulse.Infrastructure", "Data", "AdPulseDbContext.cs");
 
-        Assert.Equal(8, model.Split("entity.HasQueryFilter", StringSplitOptions.None).Length - 1);
+        Assert.Equal(9, model.Split("entity.HasQueryFilter", StringSplitOptions.None).Length - 1);
         Assert.Contains("x => Scope.IsSystemScope || x.Id == Scope.TenantId", model, StringComparison.Ordinal);
         Assert.Contains("x => Scope.IsSystemScope || x.TenantId == Scope.TenantId", model, StringComparison.Ordinal);
     }
