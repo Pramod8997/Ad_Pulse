@@ -21,7 +21,7 @@ checks as `SKIP [environment]`; a skip is not a pass for that environment.
 | Decimal and null semantics | `FinancialSemanticsReleaseGateTests` | KPI ratios use decimal arithmetic, zero denominators return `null`, omitted budget pacing remains `null`, and money properties retain `decimal(19,4)`. | Local only |
 | Idempotency boundaries | `IdempotencyReleaseGateTests` | Daily metrics use a tenant/campaign/date key and alerts use a tenant/fingerprint uniqueness boundary in both EF metadata and the SQL migration. | Local metadata/static migration inspection |
 | Scoring contract | `ScoringContractReleaseGateTests` | The schema keeps canonical decimal strings and closed properties; every shared fixture matches the .NET scorer output. | Local only |
-| Frontend/API contract presence | `ApiFrontendContractReleaseGateTests` | Accepted API and UI contract files exist and retain their route, tenant, token, null-value, and error-handling declarations. | Local/static files only |
+| Frontend/API contract presence | `ApiFrontendContractReleaseGateTests` | Frozen `api-v1`/`api-v2` and UI contract files exist; the API tenant/error/idempotency rules and the Vue route/permission map remain present. | Local/static files only |
 
 ## Environment-dependent checks
 
