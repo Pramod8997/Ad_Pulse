@@ -26,6 +26,7 @@ import type {
   AlertSeverity,
   AlertStatus,
   AlertSummary,
+  IncidentStatus,
 } from '../components/alerts/types'
 
 const props = defineProps<{ api?: AlertApi }>()
@@ -38,6 +39,8 @@ const filters = reactive<AlertFilters>({
   campaign: '',
   dateFrom: '',
   dateTo: '',
+  incidentStatus: '',
+  owner: '',
 })
 const appliedFilters = ref<AlertFilters>({ ...filters })
 const response = ref<AlertListResponse | null>(null)
@@ -57,18 +60,34 @@ const dialogRef = ref<HTMLElement | null>(null)
 const closeRef = ref<HTMLButtonElement | null>(null)
 const previousFocus = ref<HTMLElement | null>(null)
 
-const pendingAction = ref<AlertAction | null>(null)
+type PendingAction = AlertAction | `incident:${IncidentStatus}`
+const pendingAction = ref<PendingAction | null>(null)
 const reason = ref('')
 const mutationLoading = ref(false)
 const mutationError = ref<string | null>(null)
 const mutationMessage = ref<string | null>(null)
 const mutationCorrelationId = ref<string | null>(null)
+const ownerDraft = ref('')
+const ownerSaving = ref(false)
+const ownerError = ref<string | null>(null)
+const noteDraft = ref('')
+const noteSaving = ref(false)
+const noteError = ref<string | null>(null)
 
 const statusOptions: Array<{ value: AlertStatus | ''; label: string }> = [
   { value: '', label: 'All statuses' },
   { value: 'open', label: 'Open' },
   { value: 'acknowledged', label: 'Acknowledged' },
   { value: 'resolved', label: 'Resolved' },
+]
+const incidentStatusOptions: Array<{ value: IncidentStatus | ''; label: string }> = [
+  { value: '', label: 'All incident states' },
+  { value: 'new', label: 'New' },
+  { value: 'acknowledged', label: 'Acknowledged' },
+  { value: 'investigating', label: 'Investigating' },
+  { value: 'mitigated', label: 'Mitigated' },
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'false_positive', label: 'False positive' },
 ]
 const severityOptions: Array<{ value: AlertSeverity | ''; label: string }> = [
   { value: '', label: 'All severities' },
@@ -87,8 +106,10 @@ function cloneFilters(value: AlertFilters): AlertFilters {
   return { ...value }
 }
 
-function actionLabel(action: AlertAction): string {
-  return action[0].toUpperCase() + action.slice(1)
+function actionLabel(action: PendingAction): string {
+  const value = action.startsWith('incident:') ? action.slice('incident:'.length) : action
+  const label = value.replace('_', ' ')
+  return label[0].toUpperCase() + label.slice(1)
 }
 
 function actionPastTense(action: AlertAction): string {
@@ -135,6 +156,10 @@ function openDetail(alert: AlertSummary): void {
   previousFocus.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
   selectedId.value = alert.id
   selectedAlert.value = null
+  ownerDraft.value = ''
+  noteDraft.value = ''
+  ownerError.value = null
+  noteError.value = null
   detailError.value = null
   mutationMessage.value = null
   window.history.replaceState({}, '', `${window.location.pathname}?alert=${encodeURIComponent(alert.id)}`)
@@ -174,6 +199,7 @@ async function loadDetail(id: string): Promise<void> {
   detailCorrelationId.value = null
   try {
     selectedAlert.value = await api.get(id)
+    ownerDraft.value = selectedAlert.value.ownerSubjectId ?? ''
     await nextTick()
     closeRef.value?.focus()
   } catch (error) {
@@ -190,13 +216,22 @@ function submitFilters(): void {
 }
 
 function clearFilters(): void {
-  Object.assign(filters, { status: '', severity: '', metric: '', campaign: '', dateFrom: '', dateTo: '' })
+  Object.assign(filters, { status: '', severity: '', metric: '', campaign: '', dateFrom: '', dateTo: '', incidentStatus: '', owner: '' })
   submitFilters()
 }
 
 function requestAction(action: AlertAction): void {
   if (!selectedAlert.value || selectedAlert.value.status === 'unknown') return
   pendingAction.value = action
+  reason.value = ''
+  mutationError.value = null
+  mutationMessage.value = null
+  mutationCorrelationId.value = null
+}
+
+function requestIncidentAction(status: IncidentStatus): void {
+  if (!selectedAlert.value) return
+  pendingAction.value = `incident:${status}`
   reason.value = ''
   mutationError.value = null
   mutationMessage.value = null
@@ -217,13 +252,19 @@ async function confirmAction(): Promise<void> {
   mutationError.value = null
   mutationMessage.value = null
   try {
-    const updated = await api.mutate(selectedAlert.value.id, action, reason.value.trim())
+    const updated = action.startsWith('incident:')
+      ? await api.changeIncident(selectedAlert.value.id, action.slice('incident:'.length) as IncidentStatus, reason.value.trim())
+      : await api.mutate(selectedAlert.value.id, action, reason.value.trim())
     if (updated) {
       selectedAlert.value = updated
     } else {
-      selectedAlert.value = { ...selectedAlert.value, status: statusAfterAction(action), updatedAt: new Date().toISOString() }
+      selectedAlert.value = action.startsWith('incident:')
+        ? { ...selectedAlert.value, incidentStatus: action.slice('incident:'.length) as IncidentStatus, updatedAt: new Date().toISOString() }
+        : { ...selectedAlert.value, status: statusAfterAction(action), updatedAt: new Date().toISOString() }
     }
-    mutationMessage.value = `Alert ${actionPastTense(action)} successfully.`
+    mutationMessage.value = action.startsWith('incident:')
+      ? `Incident marked ${actionLabel(action).toLowerCase()} successfully.`
+      : `Alert ${actionPastTense(action)} successfully.`
     pendingAction.value = null
     reason.value = ''
     await loadList()
@@ -240,6 +281,47 @@ function availableActions(alert: AlertDetail): AlertAction[] {
   if (alert.status === 'acknowledged') return ['resolve', 'reopen']
   if (alert.status === 'resolved') return ['reopen']
   return []
+}
+
+function availableIncidentActions(alert: AlertDetail): IncidentStatus[] {
+  if (alert.incidentStatus === 'new') return ['acknowledged', 'investigating', 'resolved', 'false_positive']
+  if (alert.incidentStatus === 'acknowledged') return ['investigating', 'mitigated', 'resolved', 'false_positive']
+  if (alert.incidentStatus === 'investigating') return ['acknowledged', 'mitigated', 'resolved', 'false_positive']
+  if (alert.incidentStatus === 'mitigated') return ['investigating', 'resolved']
+  if (alert.incidentStatus === 'resolved' || alert.incidentStatus === 'false_positive') return ['new']
+  return []
+}
+
+async function saveOwner(): Promise<void> {
+  if (!selectedAlert.value || ownerSaving.value) return
+  ownerSaving.value = true
+  ownerError.value = null
+  try {
+    const updated = await api.assign(selectedAlert.value.id, ownerDraft.value.trim() || null)
+    if (updated) selectedAlert.value = updated
+    mutationMessage.value = ownerDraft.value.trim() ? 'Incident owner updated.' : 'Incident unassigned.'
+    await loadList()
+  } catch (error) {
+    ownerError.value = getErrorMessage(error)
+  } finally {
+    ownerSaving.value = false
+  }
+}
+
+async function saveNote(): Promise<void> {
+  if (!selectedAlert.value || noteSaving.value || noteDraft.value.trim().length < 3) return
+  noteSaving.value = true
+  noteError.value = null
+  try {
+    const updated = await api.addNote(selectedAlert.value.id, noteDraft.value.trim())
+    if (updated) selectedAlert.value = updated
+    noteDraft.value = ''
+    mutationMessage.value = 'Investigation note added.'
+  } catch (error) {
+    noteError.value = getErrorMessage(error)
+  } finally {
+    noteSaving.value = false
+  }
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -296,8 +378,8 @@ watch(pendingAction, (action) => {
     <header class="page-header">
       <div>
         <p class="eyebrow">Monitoring</p>
-        <h1 id="alerts-heading">Alerts</h1>
-        <p class="page-intro">Review campaign signals, inspect evidence, and record the next action.</p>
+        <h1 id="alerts-heading">Incident inbox</h1>
+        <p class="page-intro">Review campaign signals, investigate evidence, and track operational resolution.</p>
       </div>
       <button class="button button-secondary" type="button" :disabled="listLoading" @click="loadList">
         <RefreshCw :size="16" :class="{ spinning: listLoading }" aria-hidden="true" />
@@ -308,8 +390,8 @@ watch(pendingAction, (action) => {
     <section class="filter-panel" aria-labelledby="filter-heading">
       <div class="filter-heading">
         <div>
-          <h2 id="filter-heading"><Filter :size="17" aria-hidden="true" /> Filter alerts</h2>
-          <p>Filters apply to the tenant-scoped alert list.</p>
+          <h2 id="filter-heading"><Filter :size="17" aria-hidden="true" /> Filter incidents</h2>
+          <p>Filters apply to the tenant-scoped incident inbox.</p>
         </div>
         <button v-if="hasFilters" class="text-button" type="button" @click="clearFilters">Clear filters</button>
       </div>
@@ -318,6 +400,12 @@ watch(pendingAction, (action) => {
           <span>Status</span>
           <select v-model="filters.status">
             <option v-for="option in statusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
+          <span>Incident state</span>
+          <select v-model="filters.incidentStatus">
+            <option v-for="option in incidentStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
         <label>
@@ -333,6 +421,10 @@ watch(pendingAction, (action) => {
         <label>
           <span>Campaign</span>
           <input v-model="filters.campaign" type="search" placeholder="Campaign name or ID" />
+        </label>
+        <label>
+          <span>Owner subject ID</span>
+          <input v-model="filters.owner" type="search" placeholder="Optional owner" />
         </label>
         <label>
           <span>Detected from</span>
@@ -363,7 +455,7 @@ watch(pendingAction, (action) => {
     <section class="list-panel" aria-labelledby="list-heading" aria-live="polite">
       <div class="list-heading">
         <div>
-          <h2 id="list-heading">Alert queue</h2>
+        <h2 id="list-heading">Incident queue</h2>
           <p v-if="response?.totalCount !== null && response">{{ response.totalCount }} result{{ response.totalCount === 1 ? '' : 's' }}</p>
           <p v-else-if="!listLoading">Results returned by the alert service</p>
         </div>
@@ -388,9 +480,9 @@ watch(pendingAction, (action) => {
       </div>
       <div v-else class="table-wrap">
         <table>
-          <caption class="sr-only">Alerts returned by the alert service</caption>
+             <caption class="sr-only">Incidents returned by the alert service</caption>
           <thead>
-            <tr><th scope="col">Severity</th><th scope="col">Alert</th><th scope="col">Campaign</th><th scope="col">Observed / baseline</th><th scope="col">Detected</th><th scope="col">Status</th></tr>
+            <tr><th scope="col">Severity</th><th scope="col">Incident</th><th scope="col">Campaign</th><th scope="col">Observed / baseline</th><th scope="col">Detected</th><th scope="col">State</th><th scope="col">Owner</th></tr>
           </thead>
           <tbody>
             <tr v-for="alert in alerts" :key="alert.id" :class="{ selected: selectedId === alert.id }" :aria-selected="selectedId === alert.id" tabindex="0" @click="openDetail(alert)" @keydown.enter="openDetail(alert)" @keydown.space.prevent="openDetail(alert)">
@@ -399,7 +491,8 @@ watch(pendingAction, (action) => {
               <td data-label="Campaign">{{ alert.campaignName ?? alert.campaignId ?? 'Missing' }}</td>
               <td data-label="Observed / baseline"><span class="metric-value">{{ formatMetric(alert.observed) }}</span><span class="metric-baseline">Baseline: {{ formatMetric(alert.baseline) }}</span></td>
               <td data-label="Detected">{{ formatDate(alert.detectedAt) }}</td>
-              <td data-label="Status"><AlertStatusBadge :status="alert.status" /></td>
+              <td data-label="State"><AlertStatusBadge :status="alert.incidentStatus" /></td>
+              <td data-label="Owner">{{ alert.ownerSubjectId ?? 'Unassigned' }}</td>
             </tr>
           </tbody>
         </table>
@@ -409,7 +502,7 @@ watch(pendingAction, (action) => {
 
     <aside v-if="selectedId" ref="drawerRef" class="detail-drawer" role="dialog" aria-modal="true" aria-labelledby="alert-detail-heading">
       <div class="drawer-header">
-        <div><p class="eyebrow">Alert detail</p><h2 id="alert-detail-heading">{{ selectedAlert?.title ?? 'Loading alert' }}</h2></div>
+         <div><p class="eyebrow">Incident investigation</p><h2 id="alert-detail-heading">{{ selectedAlert?.title ?? 'Loading incident' }}</h2></div>
         <button ref="closeRef" class="icon-button" type="button" aria-label="Close alert detail" title="Close alert detail" @click="closeDetail"><X :size="19" aria-hidden="true" /></button>
       </div>
       <div v-if="detailLoading" class="drawer-loading" role="status"><LoaderCircle class="loading-icon" :size="22" /> Loading alert evidence…</div>
@@ -419,7 +512,7 @@ watch(pendingAction, (action) => {
         <button class="button button-secondary" type="button" @click="selectedId && loadDetail(selectedId)"><RefreshCw :size="16" aria-hidden="true" /> Try again</button>
       </div>
       <div v-else-if="selectedAlert" class="drawer-content">
-        <div class="detail-status"><AlertSeverityBadge :severity="selectedAlert.severity" /><AlertStatusBadge :status="selectedAlert.status" /></div>
+         <div class="detail-status"><AlertSeverityBadge :severity="selectedAlert.severity" /><AlertStatusBadge :status="selectedAlert.incidentStatus" /></div>
         <p class="detail-explanation">{{ selectedAlert.explanation ?? 'No explanation was supplied by the alert service.' }}</p>
 
         <section class="detail-section" aria-labelledby="evidence-heading">
@@ -434,10 +527,41 @@ watch(pendingAction, (action) => {
           </div>
         </section>
 
-        <section class="detail-section" aria-labelledby="context-heading">
-          <h3 id="context-heading">Alert context</h3>
-          <dl class="context-list"><div><dt>Campaign</dt><dd>{{ selectedAlert.campaignName ?? selectedAlert.campaignId ?? 'Missing' }}</dd></div><div><dt>Metric</dt><dd>{{ selectedAlert.metricName ?? 'Missing' }}</dd></div><div><dt>Rule ID</dt><dd>{{ selectedAlert.ruleId ?? 'Unavailable' }}</dd></div><div><dt>Scoring version</dt><dd>{{ selectedAlert.scoringVersion ?? 'Unavailable' }}</dd></div></dl>
-        </section>
+         <section class="detail-section" aria-labelledby="context-heading">
+           <h3 id="context-heading">Incident context</h3>
+           <dl class="context-list"><div><dt>Campaign</dt><dd>{{ selectedAlert.campaignName ?? selectedAlert.campaignId ?? 'Missing' }}</dd></div><div><dt>Metric</dt><dd>{{ selectedAlert.metricName ?? 'Missing' }}</dd></div><div><dt>Rule ID</dt><dd>{{ selectedAlert.ruleId ?? 'Unavailable' }}</dd></div><div><dt>Scoring version</dt><dd>{{ selectedAlert.scoringVersion ?? 'Unavailable' }}</dd></div></dl>
+         </section>
+
+         <section class="detail-section" aria-labelledby="ownership-heading">
+           <h3 id="ownership-heading">Ownership</h3>
+           <div class="inline-form">
+             <label for="owner-subject">Owner subject ID</label>
+             <input id="owner-subject" v-model="ownerDraft" maxlength="128" placeholder="Unassigned" :disabled="ownerSaving" />
+             <button class="button button-secondary" type="button" :disabled="ownerSaving" @click="saveOwner">{{ ownerSaving ? 'Saving…' : 'Save owner' }}</button>
+           </div>
+           <p class="field-help">Current owner: {{ selectedAlert.ownerSubjectId ?? 'Unassigned' }}. The server validates tenant membership.</p>
+           <p v-if="ownerError" class="inline-error" role="alert">{{ ownerError }}</p>
+         </section>
+
+         <section class="detail-section" aria-labelledby="notes-heading">
+           <h3 id="notes-heading">Investigation notes</h3>
+           <label for="investigation-note" class="sr-only">Investigation note</label>
+           <textarea id="investigation-note" v-model="noteDraft" rows="3" maxlength="2000" placeholder="Record what was checked or learned." :disabled="noteSaving" />
+           <div class="note-actions"><span class="field-help">{{ noteDraft.trim().length }}/2000 characters; minimum 3.</span><button class="button button-secondary" type="button" :disabled="noteSaving || noteDraft.trim().length < 3" @click="saveNote">{{ noteSaving ? 'Saving…' : 'Add note' }}</button></div>
+           <p v-if="noteError" class="inline-error" role="alert">{{ noteError }}</p>
+         </section>
+
+         <section class="detail-section" aria-labelledby="timeline-heading">
+           <h3 id="timeline-heading">Incident timeline</h3>
+           <ol v-if="selectedAlert.timeline.length" class="timeline-list">
+             <li v-for="entry in selectedAlert.timeline" :key="entry.id">
+               <div class="timeline-heading"><strong>{{ entry.action }}</strong><time :datetime="entry.occurredAt ?? undefined">{{ formatDate(entry.occurredAt) }}</time></div>
+               <span class="timeline-actor">{{ entry.actorSubjectId ?? 'Unavailable' }}</span>
+               <p v-if="entry.note">{{ entry.note }}</p>
+             </li>
+           </ol>
+           <p v-else class="muted">No investigation activity has been recorded.</p>
+         </section>
 
         <section class="detail-section" aria-labelledby="checks-heading">
           <h3 id="checks-heading">Recommended checks</h3>
@@ -448,7 +572,12 @@ watch(pendingAction, (action) => {
 
         <div v-if="mutationError" class="state-banner state-error" role="alert"><CircleAlert :size="17" aria-hidden="true" /><span>{{ mutationError }}<span v-if="mutationCorrelationId"> Correlation ID: {{ mutationCorrelationId }}</span></span></div>
         <div v-if="mutationMessage" class="state-banner state-success" role="status"><Check :size="17" aria-hidden="true" /> {{ mutationMessage }}</div>
-        <div class="action-row" v-if="availableActions(selectedAlert).length">
+         <div class="action-row" v-if="availableIncidentActions(selectedAlert).length">
+           <button v-for="status in availableIncidentActions(selectedAlert)" :key="status" class="button" :class="status === 'resolved' || status === 'false_positive' ? 'button-primary' : 'button-secondary'" type="button" @click="requestIncidentAction(status)">
+             <CheckCircle2 :size="16" aria-hidden="true" /> {{ actionLabel(`incident:${status}`) }}
+           </button>
+         </div>
+         <div class="action-row" v-if="availableActions(selectedAlert).length">
           <button v-for="action in availableActions(selectedAlert)" :key="action" class="button" :class="action === 'resolve' ? 'button-primary' : 'button-secondary'" type="button" @click="requestAction(action)">
             <RotateCcw v-if="action === 'reopen'" :size="16" aria-hidden="true" /><CheckCircle2 v-else :size="16" aria-hidden="true" />
             {{ actionLabel(action) }}
@@ -461,11 +590,11 @@ watch(pendingAction, (action) => {
     <div v-if="pendingAction" class="dialog-backdrop" role="presentation">
       <section ref="dialogRef" class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-heading" aria-describedby="confirm-copy">
         <div class="dialog-icon"><AlertTriangle :size="21" aria-hidden="true" /></div>
-        <h2 id="confirm-heading">{{ selectedActionLabel }} alert?</h2>
-        <p id="confirm-copy">This records a lifecycle change for “{{ selectedAlert?.title }}”. Add a short reason for the audit trail.</p>
-        <label for="mutation-reason">Reason <span>(required)</span></label>
-        <textarea id="mutation-reason" v-model="reason" rows="4" maxlength="500" placeholder="What changed or was checked?" :disabled="mutationLoading" />
-        <p class="field-help">{{ reason.trim().length }}/500 characters; minimum 3.</p>
+         <h2 id="confirm-heading">{{ selectedActionLabel }} incident?</h2>
+         <p id="confirm-copy">This records a lifecycle change for “{{ selectedAlert?.title }}”. Add the investigation context for the timeline.</p>
+         <label for="mutation-reason">{{ pendingAction?.endsWith('resolved') ? 'Resolution summary' : pendingAction?.endsWith('false_positive') ? 'False-positive reason' : 'Reason' }} <span>(required)</span></label>
+         <textarea id="mutation-reason" v-model="reason" rows="4" :maxlength="pendingAction?.startsWith('incident:') ? 2000 : 500" placeholder="What changed or was checked?" :disabled="mutationLoading" />
+         <p class="field-help">{{ reason.trim().length }}/{{ pendingAction?.startsWith('incident:') ? 2000 : 500 }} characters; minimum 3.</p>
         <div class="dialog-actions"><button class="button button-secondary" type="button" :disabled="mutationLoading" @click="cancelAction">Cancel</button><button class="button button-primary" type="button" :disabled="!canSubmitMutation" @click="confirmAction"><LoaderCircle v-if="mutationLoading" class="loading-icon" :size="16" /><Check v-else :size="16" aria-hidden="true" /> Confirm {{ selectedActionLabel.toLowerCase() }}</button></div>
       </section>
     </div>
@@ -497,7 +626,7 @@ h3 { font-size: 15px; margin-bottom: 8px; }
 .filter-panel { padding: 18px 20px 20px; }
 .filter-heading { margin-bottom: 17px; }
 .filter-heading h2 { align-items: center; display: flex; gap: 7px; }
-.filters { align-items: end; display: grid; gap: 14px; grid-template-columns: repeat(6, minmax(0, 1fr)) auto; }
+.filters { align-items: end; display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
 label { color: var(--text-primary, #182230); display: grid; font-size: 13px; font-weight: 600; gap: 6px; }
 label > span:first-child { color: var(--text-secondary, #667085); font-size: 12px; }
 input, select, textarea { background: var(--surface, #fff); border: 1px solid var(--border, #e4e7ec); border-radius: 6px; color: var(--text-primary, #182230); min-height: 40px; padding: 8px 10px; width: 100%; }
@@ -515,7 +644,7 @@ textarea { resize: vertical; }
 .list-heading { align-items: center; border-bottom: 1px solid var(--border, #e4e7ec); padding: 18px 20px; }
 .loading-icon { animation: spin 900ms linear infinite; }
 .table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; min-width: 850px; width: 100%; }
+table { border-collapse: collapse; min-width: 1000px; width: 100%; }
 th, td { border-bottom: 1px solid var(--border, #e4e7ec); padding: 15px 14px; text-align: left; vertical-align: middle; }
 thead { background: var(--surface-subtle, #f8fafc); }
 thead th { color: var(--text-secondary, #667085); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
@@ -552,6 +681,18 @@ dd small { color: var(--text-secondary, #667085); display: block; font-size: 11p
 .context-list > div { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
 .context-list dt { margin: 0; }
 .context-list dd { text-align: right; }
+.inline-form { align-items: end; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
+.inline-form label { grid-column: 1 / -1; }
+.inline-form input { min-width: 0; }
+.note-actions { align-items: center; display: flex; justify-content: space-between; gap: 12px; }
+.note-actions .field-help { margin-bottom: 0; }
+.timeline-list { list-style: none; margin: 0; padding: 0; }
+.timeline-list li { border-left: 2px solid var(--border, #e4e7ec); margin-left: 5px; padding: 0 0 16px 16px; position: relative; }
+.timeline-list li::before { background: var(--accent, #176b64); border: 3px solid var(--surface, #fff); border-radius: 50%; content: ''; height: 8px; left: -7px; position: absolute; top: 2px; width: 8px; }
+.timeline-heading { align-items: baseline; display: flex; gap: 10px; justify-content: space-between; }
+.timeline-heading time, .timeline-actor { color: var(--text-secondary, #667085); font-size: 12px; }
+.timeline-actor { display: block; margin-top: 3px; }
+.timeline-list p { font-size: 13px; line-height: 1.45; margin: 7px 0 0; overflow-wrap: anywhere; }
 .detail-section ul { line-height: 1.5; margin: 0; padding-left: 19px; }
 .detail-section li + li { margin-top: 7px; }
 .reason-codes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 15px; }

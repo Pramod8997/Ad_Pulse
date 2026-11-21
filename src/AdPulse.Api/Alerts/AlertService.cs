@@ -61,7 +61,7 @@ public sealed class AlertService(AdPulseDbContext db)
             .Include(candidate => candidate.Campaign)
             .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
 
-        return alert is null ? null : ToDetails(alert);
+        return alert is null ? null : await ToDetailsAsync(alert, cancellationToken);
     }
 
     public Task<AlertMutationOutcome?> AcknowledgeAsync(
@@ -84,6 +84,108 @@ public sealed class AlertService(AdPulseDbContext db)
         AlertMutationRequest request,
         CancellationToken cancellationToken = default) =>
         ChangeStatusAsync(access, id, AlertStatuses.Open, "reopen", request, cancellationToken);
+
+    public async Task<AlertMutationOutcome?> ChangeIncidentStatusAsync(
+        TenantContext access,
+        Guid id,
+        IncidentStatusChangeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenant(access);
+        var (targetStatus, summary) = request?.Validate() ?? throw new AlertValidationException("A mutation body is required.");
+        var alert = await FindAsync(id, cancellationToken);
+        if (alert is null)
+        {
+            return null;
+        }
+
+        var currentStatus = IncidentStatusFor(alert);
+        if (currentStatus == targetStatus)
+        {
+            return new AlertMutationOutcome(await ToDetailsAsync(alert, cancellationToken), false, $"incident.{targetStatus}");
+        }
+
+        if (!CanTransitionIncident(currentStatus, targetStatus))
+        {
+            throw new AlertConflictException($"An incident in status '{currentStatus}' cannot transition to '{targetStatus}'.");
+        }
+
+        ApplyIncidentState(alert, targetStatus, summary, access.SubjectId);
+        AddAudit(access, alert.Id, $"incident.{targetStatus}", new
+        {
+            from_incident_status = currentStatus,
+            to_incident_status = targetStatus,
+            summary
+        });
+        await db.SaveChangesAsync(cancellationToken);
+
+        return new AlertMutationOutcome(await ToDetailsAsync(alert, cancellationToken), true, $"incident.{targetStatus}");
+    }
+
+    public async Task<AlertMutationOutcome?> AssignAsync(
+        TenantContext access,
+        Guid id,
+        AlertAssignmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenant(access);
+        var ownerSubjectId = request?.Validate() ?? throw new AlertValidationException("A mutation body is required.");
+        if (ownerSubjectId is not null
+            && !await db.Memberships.AnyAsync(member => member.SubjectId == ownerSubjectId, cancellationToken))
+        {
+            throw new AlertValidationException("Owner must be a member of the current tenant.");
+        }
+
+        var alert = await FindAsync(id, cancellationToken);
+        if (alert is null)
+        {
+            return null;
+        }
+
+        if (string.Equals(alert.OwnerSubjectId, ownerSubjectId, StringComparison.Ordinal))
+        {
+            return new AlertMutationOutcome(await ToDetailsAsync(alert, cancellationToken), false, ownerSubjectId is null ? "incident.unassigned" : "incident.assigned");
+        }
+
+        alert.OwnerSubjectId = ownerSubjectId;
+        alert.AssignedAt = ownerSubjectId is null ? null : DateTimeOffset.UtcNow;
+        AddAudit(access, alert.Id, ownerSubjectId is null ? "incident.unassigned" : "incident.assigned", new
+        {
+            owner_subject_id = ownerSubjectId
+        });
+        await db.SaveChangesAsync(cancellationToken);
+
+        return new AlertMutationOutcome(await ToDetailsAsync(alert, cancellationToken), true, ownerSubjectId is null ? "incident.unassigned" : "incident.assigned");
+    }
+
+    public async Task<AlertDetails?> AddNoteAsync(
+        TenantContext access,
+        Guid id,
+        IncidentNoteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenant(access);
+        var note = request?.Validate() ?? throw new AlertValidationException("A note body is required.");
+        var alert = await FindAsync(id, cancellationToken);
+        if (alert is null)
+        {
+            return null;
+        }
+
+        AddAudit(access, alert.Id, "incident.note_added", new { note });
+        await db.SaveChangesAsync(cancellationToken);
+        return await ToDetailsAsync(alert, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<AlertTimelineEntry>?> GetTimelineAsync(
+        TenantContext access,
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenant(access);
+        var exists = await db.Alerts.AnyAsync(alert => alert.Id == id, cancellationToken);
+        return exists ? await ReadTimelineAsync(id, cancellationToken) : null;
+    }
 
     public async Task<AlertMutationOutcome?> ChangeStatusAsync(
         TenantContext access,
@@ -129,7 +231,7 @@ public sealed class AlertService(AdPulseDbContext db)
             .SingleOrDefaultAsync(alert => alert.Fingerprint == scored.Fingerprint, cancellationToken);
         if (existing is not null)
         {
-            return ToDetails(existing);
+            return await ToDetailsAsync(existing, cancellationToken);
         }
 
         if (scored.CampaignId is { } campaignId
@@ -148,6 +250,7 @@ public sealed class AlertService(AdPulseDbContext db)
             Score = scored.Score,
             Severity = scored.Severity,
             Status = AlertStatuses.Open,
+            IncidentStatus = IncidentStatuses.New,
             Observed = scored.Observed,
             Baseline = scored.Baseline,
             Confidence = scored.Confidence,
@@ -159,6 +262,12 @@ public sealed class AlertService(AdPulseDbContext db)
             DetectedAt = scored.DetectedAt ?? DateTimeOffset.UtcNow
         };
         db.Alerts.Add(alert);
+        AddAudit(access, alert.Id, "incident.created", new
+        {
+            incident_status = IncidentStatuses.New,
+            severity = alert.Severity,
+            metric = alert.MetricName
+        });
 
         try
         {
@@ -176,10 +285,10 @@ public sealed class AlertService(AdPulseDbContext db)
                 throw;
             }
 
-            return ToDetails(existing);
+            return await ToDetailsAsync(existing, cancellationToken);
         }
 
-        return ToDetails(alert);
+        return await ToDetailsAsync(alert, cancellationToken);
     }
 
     private async Task<AlertMutationOutcome?> ChangeStatusAsync(
@@ -204,7 +313,7 @@ public sealed class AlertService(AdPulseDbContext db)
         var currentStatus = alert.Status.ToLowerInvariant();
         if (currentStatus == targetStatus)
         {
-            return new AlertMutationOutcome(ToDetails(alert), false, action);
+            return new AlertMutationOutcome(await ToDetailsAsync(alert, cancellationToken), false, action);
         }
 
         if (!CanTransition(currentStatus, targetStatus))
@@ -212,26 +321,40 @@ public sealed class AlertService(AdPulseDbContext db)
             throw new AlertConflictException($"An alert in status '{alert.Status}' cannot be {Verb(action)}.");
         }
 
+        var currentIncidentStatus = IncidentStatusFor(alert);
         alert.Status = targetStatus;
-        db.AuditEvents.Add(new AuditEvent
+        alert.IncidentStatus = targetStatus switch
         {
-            TenantId = access.TenantId,
-            Id = Guid.NewGuid(),
-            OccurredAt = DateTimeOffset.UtcNow,
-            ActorSubjectId = access.SubjectId,
-            Action = $"alert.{PastTense(action)}",
-            EntityType = "alert",
-            EntityId = alert.Id.ToString("D"),
-            PayloadJson = JsonSerializer.Serialize(new
-            {
-                from_status = currentStatus,
-                to_status = targetStatus,
-                reason
-            })
+            AlertStatuses.Open => IncidentStatuses.New,
+            AlertStatuses.Acknowledged => IncidentStatuses.Acknowledged,
+            AlertStatuses.Resolved => IncidentStatuses.Resolved,
+            _ => alert.IncidentStatus
+        };
+        if (targetStatus == AlertStatuses.Resolved)
+        {
+            alert.ResolutionSummary = reason;
+            alert.ResolvedAt = DateTimeOffset.UtcNow;
+            alert.ResolvedBySubjectId = access.SubjectId;
+        }
+        else if (targetStatus == AlertStatuses.Open)
+        {
+            alert.ResolutionSummary = null;
+            alert.FalsePositiveReason = null;
+            alert.ResolvedAt = null;
+            alert.ResolvedBySubjectId = null;
+        }
+
+        AddAudit(access, alert.Id, $"alert.{PastTense(action)}", new
+        {
+            from_status = currentStatus,
+            to_status = targetStatus,
+            from_incident_status = currentIncidentStatus,
+            to_incident_status = alert.IncidentStatus,
+            reason
         });
         await db.SaveChangesAsync(cancellationToken);
 
-        return new AlertMutationOutcome(ToDetails(alert), true, action);
+        return new AlertMutationOutcome(await ToDetailsAsync(alert, cancellationToken), true, action);
     }
 
     private static bool CanTransition(string currentStatus, string targetStatus) =>
@@ -243,6 +366,50 @@ public sealed class AlertService(AdPulseDbContext db)
             (AlertStatuses.Resolved, AlertStatuses.Open) => true,
             _ => false
         };
+
+    private static bool CanTransitionIncident(string currentStatus, string targetStatus) =>
+        (currentStatus, targetStatus) switch
+        {
+            (IncidentStatuses.New, IncidentStatuses.Acknowledged or IncidentStatuses.Investigating or IncidentStatuses.Resolved or IncidentStatuses.FalsePositive) => true,
+            (IncidentStatuses.Acknowledged, IncidentStatuses.Investigating or IncidentStatuses.Mitigated or IncidentStatuses.Resolved or IncidentStatuses.FalsePositive) => true,
+            (IncidentStatuses.Investigating, IncidentStatuses.Acknowledged or IncidentStatuses.Mitigated or IncidentStatuses.Resolved or IncidentStatuses.FalsePositive) => true,
+            (IncidentStatuses.Mitigated, IncidentStatuses.Investigating or IncidentStatuses.Resolved) => true,
+            (IncidentStatuses.Resolved or IncidentStatuses.FalsePositive, IncidentStatuses.New) => true,
+            _ => false
+        };
+
+    private static void ApplyIncidentState(Alert alert, string targetStatus, string? summary, string actorSubjectId)
+    {
+        alert.IncidentStatus = targetStatus;
+        alert.Status = targetStatus switch
+        {
+            IncidentStatuses.New => AlertStatuses.Open,
+            IncidentStatuses.Resolved or IncidentStatuses.FalsePositive => AlertStatuses.Resolved,
+            _ => AlertStatuses.Acknowledged
+        };
+
+        if (targetStatus == IncidentStatuses.Resolved)
+        {
+            alert.ResolutionSummary = summary;
+            alert.FalsePositiveReason = null;
+            alert.ResolvedAt = DateTimeOffset.UtcNow;
+            alert.ResolvedBySubjectId = actorSubjectId;
+        }
+        else if (targetStatus == IncidentStatuses.FalsePositive)
+        {
+            alert.FalsePositiveReason = summary;
+            alert.ResolutionSummary = null;
+            alert.ResolvedAt = DateTimeOffset.UtcNow;
+            alert.ResolvedBySubjectId = actorSubjectId;
+        }
+        else if (targetStatus == IncidentStatuses.New)
+        {
+            alert.ResolutionSummary = null;
+            alert.FalsePositiveReason = null;
+            alert.ResolvedAt = null;
+            alert.ResolvedBySubjectId = null;
+        }
+    }
 
     private static string PastTense(string action) => action switch
     {
@@ -265,6 +432,17 @@ public sealed class AlertService(AdPulseDbContext db)
         if (query.Status is not null)
         {
             alerts = alerts.Where(alert => alert.Status == query.Status);
+        }
+
+        if (query.IncidentStatus is not null)
+        {
+            alerts = alerts.Where(alert => alert.IncidentStatus == query.IncidentStatus
+                || (alert.IncidentStatus == null && query.IncidentStatus == LegacyIncidentStatus(alert.Status)));
+        }
+
+        if (query.OwnerSubjectId is not null)
+        {
+            alerts = alerts.Where(alert => alert.OwnerSubjectId == query.OwnerSubjectId);
         }
 
         if (query.Severity is not null)
@@ -307,6 +485,38 @@ public sealed class AlertService(AdPulseDbContext db)
         }
     }
 
+    private async Task<Alert?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        await db.Alerts
+            .Include(candidate => candidate.Campaign)
+            .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+
+    private async Task<AlertDetails> ToDetailsAsync(Alert alert, CancellationToken cancellationToken) => new(
+        alert.Id,
+        alert.CampaignId,
+        alert.Campaign?.Name,
+        alert.Fingerprint,
+        alert.MetricName,
+        alert.Score,
+        alert.Severity,
+        alert.Status,
+        alert.Observed,
+        alert.Baseline,
+        alert.Confidence,
+        alert.DataSufficiency,
+        AlertContractSerialization.DeserializeReasonCodes(alert.ReasonCodesJson),
+        alert.ScoringVersion,
+        alert.EvidenceWindowStart,
+        alert.EvidenceWindowEnd,
+        alert.DetectedAt,
+        IncidentStatusFor(alert),
+        alert.OwnerSubjectId,
+        alert.AssignedAt,
+        alert.ResolutionSummary,
+        alert.FalsePositiveReason,
+        alert.ResolvedAt,
+        alert.ResolvedBySubjectId,
+        await ReadTimelineAsync(alert.Id, cancellationToken));
+
     private static AlertSummary ToSummary(Alert alert) => new(
         alert.Id,
         alert.CampaignId,
@@ -324,26 +534,84 @@ public sealed class AlertService(AdPulseDbContext db)
         alert.ScoringVersion,
         alert.EvidenceWindowStart,
         alert.EvidenceWindowEnd,
-        alert.DetectedAt);
+        alert.DetectedAt,
+        IncidentStatusFor(alert),
+        alert.OwnerSubjectId,
+        alert.AssignedAt);
 
-    private static AlertDetails ToDetails(Alert alert) => new(
-        alert.Id,
-        alert.CampaignId,
-        alert.Campaign?.Name,
-        alert.Fingerprint,
-        alert.MetricName,
-        alert.Score,
-        alert.Severity,
-        alert.Status,
-        alert.Observed,
-        alert.Baseline,
-        alert.Confidence,
-        alert.DataSufficiency,
-        AlertContractSerialization.DeserializeReasonCodes(alert.ReasonCodesJson),
-        alert.ScoringVersion,
-        alert.EvidenceWindowStart,
-        alert.EvidenceWindowEnd,
-        alert.DetectedAt);
+    private async Task<IReadOnlyList<AlertTimelineEntry>> ReadTimelineAsync(Guid alertId, CancellationToken cancellationToken)
+    {
+        var query = db.AuditEvents
+            .AsNoTracking()
+            .Where(audit => audit.EntityType == "alert" && audit.EntityId == alertId.ToString("D"));
+        List<AuditEvent> events;
+        if (db.Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite")
+        {
+            events = (await query.ToListAsync(cancellationToken))
+                .OrderByDescending(audit => audit.OccurredAt)
+                .ThenByDescending(audit => audit.Id)
+                .Take(100)
+                .ToList();
+        }
+        else
+        {
+            events = await query
+                .OrderByDescending(audit => audit.OccurredAt)
+                .ThenByDescending(audit => audit.Id)
+                .Take(100)
+                .ToListAsync(cancellationToken);
+        }
+
+        return events.Select(ToTimelineEntry).ToArray();
+    }
+
+    private static AlertTimelineEntry ToTimelineEntry(AuditEvent audit)
+    {
+        string? note = null;
+        string? fromStatus = null;
+        string? toStatus = null;
+        string? ownerSubjectId = null;
+        try
+        {
+            using var document = JsonDocument.Parse(audit.PayloadJson);
+            var payload = document.RootElement;
+            note = ReadString(payload, "note") ?? ReadString(payload, "reason") ?? ReadString(payload, "summary");
+            fromStatus = ReadString(payload, "from_incident_status");
+            toStatus = ReadString(payload, "to_incident_status");
+            ownerSubjectId = ReadString(payload, "owner_subject_id");
+        }
+        catch (JsonException)
+        {
+            // The database validates JSON in production; malformed test data remains a safe, payload-free timeline entry.
+        }
+
+        return new AlertTimelineEntry(audit.Id, audit.OccurredAt.ToUniversalTime(), audit.ActorSubjectId, audit.Action, note, fromStatus, toStatus, ownerSubjectId);
+    }
+
+    private static string? ReadString(JsonElement payload, string propertyName) =>
+        payload.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static string IncidentStatusFor(Alert alert) => alert.IncidentStatus ?? LegacyIncidentStatus(alert.Status);
+
+    private static string LegacyIncidentStatus(string status) => status.ToLowerInvariant() switch
+    {
+        AlertStatuses.Acknowledged => IncidentStatuses.Acknowledged,
+        AlertStatuses.Resolved => IncidentStatuses.Resolved,
+        _ => IncidentStatuses.New
+    };
+
+    private void AddAudit(TenantContext access, Guid alertId, string action, object payload) =>
+        db.AuditEvents.Add(new AuditEvent
+        {
+            TenantId = access.TenantId,
+            Id = Guid.NewGuid(),
+            OccurredAt = DateTimeOffset.UtcNow,
+            ActorSubjectId = access.SubjectId,
+            Action = action,
+            EntityType = "alert",
+            EntityId = alertId.ToString("D"),
+            PayloadJson = JsonSerializer.Serialize(payload)
+        });
 }
 
 internal sealed record AlertCursor(DateTimeOffset DetectedAt, Guid Id, string Filter)
@@ -387,5 +655,7 @@ internal sealed record AlertCursor(DateTimeOffset DetectedAt, Guid Id, string Fi
         query.Metric ?? string.Empty,
         query.CampaignId?.ToString("D") ?? string.Empty,
         query.From?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
-        query.To?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty);
+        query.To?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+        query.IncidentStatus ?? string.Empty,
+        query.OwnerSubjectId ?? string.Empty);
 }

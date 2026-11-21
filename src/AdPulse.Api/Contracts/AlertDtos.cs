@@ -9,6 +9,16 @@ public static class AlertStatuses
     public const string Resolved = "resolved";
 }
 
+public static class IncidentStatuses
+{
+    public const string New = "new";
+    public const string Acknowledged = "acknowledged";
+    public const string Investigating = "investigating";
+    public const string Mitigated = "mitigated";
+    public const string Resolved = "resolved";
+    public const string FalsePositive = "false_positive";
+}
+
 public record AlertSummaryDto
 {
     [JsonPropertyName("id")]
@@ -31,6 +41,15 @@ public record AlertSummaryDto
 
     [JsonPropertyName("detectedAt")]
     public DateTimeOffset DetectedAt { get; init; }
+
+    [JsonPropertyName("incidentStatus")]
+    public string? IncidentStatus { get; init; }
+
+    [JsonPropertyName("ownerSubjectId")]
+    public string? OwnerSubjectId { get; init; }
+
+    [JsonPropertyName("assignedAt")]
+    public DateTimeOffset? AssignedAt { get; init; }
 }
 
 public sealed record AlertDto : AlertSummaryDto
@@ -64,6 +83,18 @@ public sealed record AlertDto : AlertSummaryDto
 
     [JsonPropertyName("evidenceWindowEnd")]
     public DateOnly EvidenceWindowEnd { get; init; }
+
+    [JsonPropertyName("resolutionSummary")]
+    public string? ResolutionSummary { get; init; }
+
+    [JsonPropertyName("falsePositiveReason")]
+    public string? FalsePositiveReason { get; init; }
+
+    [JsonPropertyName("resolvedAt")]
+    public DateTimeOffset? ResolvedAt { get; init; }
+
+    [JsonPropertyName("resolvedBySubjectId")]
+    public string? ResolvedBySubjectId { get; init; }
 }
 
 public sealed record UpdateAlertRequest

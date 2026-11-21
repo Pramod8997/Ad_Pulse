@@ -11,6 +11,18 @@ public static class AlertStatuses
     public static bool IsKnown(string value) => value is Open or Acknowledged or Resolved;
 }
 
+public static class IncidentStatuses
+{
+    public const string New = "new";
+    public const string Acknowledged = "acknowledged";
+    public const string Investigating = "investigating";
+    public const string Mitigated = "mitigated";
+    public const string Resolved = "resolved";
+    public const string FalsePositive = "false_positive";
+
+    public static bool IsKnown(string value) => value is New or Acknowledged or Investigating or Mitigated or Resolved or FalsePositive;
+}
+
 public static class AlertSeverities
 {
     public static bool IsKnown(string value) => value is "none" or "low" or "medium" or "high" or "critical";
@@ -24,7 +36,9 @@ public sealed record AlertListQuery(
     string? Metric = null,
     Guid? CampaignId = null,
     DateOnly? From = null,
-    DateOnly? To = null)
+    DateOnly? To = null,
+    string? IncidentStatus = null,
+    string? OwnerSubjectId = null)
 {
     public const int DefaultLimit = 25;
     public const int MaximumLimit = 100;
@@ -54,6 +68,18 @@ public sealed record AlertListQuery(
             throw new AlertValidationException("Metric name must be at most 64 characters.");
         }
 
+        var incidentStatus = Normalize(IncidentStatus);
+        if (incidentStatus is not null && !IncidentStatuses.IsKnown(incidentStatus))
+        {
+            throw new AlertValidationException("Incident status is invalid.");
+        }
+
+        var ownerSubjectId = Normalize(OwnerSubjectId);
+        if (ownerSubjectId is not null && ownerSubjectId.Length > 128)
+        {
+            throw new AlertValidationException("Owner subject ID must be at most 128 characters.");
+        }
+
         if (From is not null && To is not null && From > To)
         {
             throw new AlertValidationException("From must not be after To.");
@@ -64,7 +90,7 @@ public sealed record AlertListQuery(
             throw new AlertValidationException("Cursor is invalid.");
         }
 
-        return this with { Status = status, Severity = severity, Metric = metricName };
+        return this with { Status = status, Severity = severity, Metric = metricName, IncidentStatus = incidentStatus, OwnerSubjectId = ownerSubjectId };
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
@@ -121,6 +147,76 @@ public sealed record AlertStatusChangeRequest(string Status, string? Reason = nu
         }
 
         return (status, reason);
+    }
+}
+
+public sealed record IncidentStatusChangeRequest(string Status, string? Summary = null, bool Confirm = false)
+{
+    public (string Status, string? Summary) Validate()
+    {
+        var status = Status?.Trim().ToLowerInvariant();
+        if (status is null || !IncidentStatuses.IsKnown(status))
+        {
+            throw new AlertValidationException("Incident status is invalid.");
+        }
+
+        if (!Confirm)
+        {
+            throw new AlertValidationException("Confirmation is required for an incident status change.");
+        }
+
+        var summary = Summary?.Trim();
+        if (summary is not null && summary.Length > 2000)
+        {
+            throw new AlertValidationException("Incident summary must be at most 2000 characters.");
+        }
+
+        if (status is IncidentStatuses.Resolved or IncidentStatuses.FalsePositive && string.IsNullOrWhiteSpace(summary))
+        {
+            throw new AlertValidationException(status == IncidentStatuses.Resolved
+                ? "A resolution summary is required when resolving an incident."
+                : "A reason is required when marking an incident as a false positive.");
+        }
+
+        return (status, summary);
+    }
+}
+
+public sealed record AlertAssignmentRequest(string? OwnerSubjectId, bool Confirm = false)
+{
+    public string? Validate()
+    {
+        if (!Confirm)
+        {
+            throw new AlertValidationException("Confirmation is required when changing incident ownership.");
+        }
+
+        var owner = string.IsNullOrWhiteSpace(OwnerSubjectId) ? null : OwnerSubjectId.Trim();
+        if (owner is not null && (owner.Length > 128 || owner.Contains('|', StringComparison.Ordinal)))
+        {
+            throw new AlertValidationException("Owner subject ID is invalid.");
+        }
+
+        return owner;
+    }
+}
+
+public sealed record IncidentNoteRequest(string Note)
+{
+    public string Validate()
+    {
+        var note = Note?.Trim();
+        if (string.IsNullOrWhiteSpace(note))
+        {
+            throw new AlertValidationException("An investigation note is required.");
+        }
+
+        if (note.Length > 2000)
+        {
+            throw new AlertValidationException("Investigation notes must be at most 2000 characters.");
+        }
+
+        return note;
     }
 }
 
@@ -209,7 +305,20 @@ public sealed record AlertSummary(
     string ScoringVersion,
     DateOnly EvidenceWindowStart,
     DateOnly EvidenceWindowEnd,
-    DateTimeOffset DetectedAt);
+    DateTimeOffset DetectedAt,
+    string IncidentStatus,
+    string? OwnerSubjectId,
+    DateTimeOffset? AssignedAt);
+
+public sealed record AlertTimelineEntry(
+    Guid Id,
+    DateTimeOffset OccurredAt,
+    string ActorSubjectId,
+    string Action,
+    string? Note,
+    string? FromIncidentStatus,
+    string? ToIncidentStatus,
+    string? OwnerSubjectId);
 
 public sealed record AlertDetails(
     Guid Id,
@@ -228,7 +337,15 @@ public sealed record AlertDetails(
     string ScoringVersion,
     DateOnly EvidenceWindowStart,
     DateOnly EvidenceWindowEnd,
-    DateTimeOffset DetectedAt);
+    DateTimeOffset DetectedAt,
+    string IncidentStatus,
+    string? OwnerSubjectId,
+    DateTimeOffset? AssignedAt,
+    string? ResolutionSummary,
+    string? FalsePositiveReason,
+    DateTimeOffset? ResolvedAt,
+    string? ResolvedBySubjectId,
+    IReadOnlyList<AlertTimelineEntry> Timeline);
 
 public sealed record AlertPage(
     IReadOnlyList<AlertSummary> Items,

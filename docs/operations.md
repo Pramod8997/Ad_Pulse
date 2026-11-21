@@ -4,11 +4,11 @@ This is the Phase 2 local operations baseline. It keeps the API as the authoriza
 
 ## Health and readiness
 
-The current API exposes an anonymous `GET /health` liveness check. A `200` response means the API process can accept requests; it does not prove that SQL Server, migrations, OIDC discovery, or the scorer are available.
+The API exposes an anonymous `GET /health` liveness check. A `200` response means the API process can accept requests; it does not prove that SQL Server, migrations, OIDC discovery, or the scorer are available.
 
-The integrator should add an anonymous `GET /ready` endpoint when the API workflow wiring is complete. Readiness should return `200` only when the required SQL Server connection/schema and scorer dependency are usable, and `503` otherwise. Do not make liveness depend on a downstream service. The scorer exposes its own anonymous `GET /health` endpoint.
+The scorer exposes its own anonymous `GET /health` endpoint. SQL Server readiness remains an environment check because this repository does not run migrations automatically.
 
-The Compose SQL Server healthcheck proves only that the SQL Server engine accepts a local query. It does not apply `db/migrations/001_initial.sql`.
+The Compose SQL Server healthcheck proves only that the SQL Server engine accepts a local query. It does not apply the ordered migration chain.
 
 ## Structured logs and correlation
 
@@ -46,14 +46,17 @@ $env:MSSQL_SA_PASSWORD = "use-a-local-development-password"
 docker compose --profile local up
 ```
 
-Create the local database and apply the checked-in migration once SQL Server is healthy:
+Create the local database and apply the ordered checked-in migrations once SQL Server is healthy:
 
 ```text
 docker compose --profile local exec sqlserver sh -c '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -Q "IF DB_ID(N'"'"'AdPulse'"'"') IS NULL CREATE DATABASE [AdPulse]"'
 docker compose --profile local exec sqlserver sh -c '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/001_initial.sql'
+docker compose --profile local exec sqlserver sh -c '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/002_tenant_reporting_settings.sql'
+docker compose --profile local exec sqlserver sh -c '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/003_import_pending_metrics.sql'
+docker compose --profile local exec sqlserver sh -c '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/004_alert_incident_workflow.sql'
 ```
 
-The API container passes the SQL connection and scorer base URL through environment variables for the Phase 2 integrator. The current API does not yet register the database or typed scorer client, so those settings are extension points until the workflow implementation lands.
+The API container passes the SQL connection and scorer base address through environment variables. The API uses the SQL Server database and typed scorer client for the existing workflow services.
 
 Stop the profile with `docker compose --profile local down`. The named `sqlserver-data` volume preserves local data; remove it only when intentionally resetting the database.
 

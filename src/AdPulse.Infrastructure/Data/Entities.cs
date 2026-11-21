@@ -107,6 +107,13 @@ public sealed class Alert : ITenantOwned
     public decimal Score { get; set; }
     public string Severity { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string? IncidentStatus { get; set; } = "new";
+    public string? OwnerSubjectId { get; set; }
+    public DateTimeOffset? AssignedAt { get; set; }
+    public string? ResolutionSummary { get; set; }
+    public string? FalsePositiveReason { get; set; }
+    public DateTimeOffset? ResolvedAt { get; set; }
+    public string? ResolvedBySubjectId { get; set; }
     public decimal Observed { get; set; }
     public decimal Baseline { get; set; }
     public decimal Confidence { get; set; }

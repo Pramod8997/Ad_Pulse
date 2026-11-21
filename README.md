@@ -79,6 +79,9 @@ Apply the schema and demo data inside the healthy SQL Server container:
 ```powershell
 docker compose --profile local exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$env:MSSQL_SA_PASSWORD" -Q "IF DB_ID(N'AdPulse') IS NULL CREATE DATABASE [AdPulse]"
 docker compose --profile local exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$env:MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/001_initial.sql
+docker compose --profile local exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$env:MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/002_tenant_reporting_settings.sql
+docker compose --profile local exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$env:MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/003_import_pending_metrics.sql
+docker compose --profile local exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$env:MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/migrations/004_alert_incident_workflow.sql
 docker compose --profile local exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$env:MSSQL_SA_PASSWORD" -d AdPulse -i /workspace/db/seed/001_demo.sql
 curl.exe http://127.0.0.1:8080/health
 ```
@@ -121,7 +124,7 @@ In another shell, set the API's non-secret local connection and provider setting
 
 ```powershell
 $env:ConnectionStrings__AdPulse = "Server=localhost;Database=AdPulse;Integrated Security=True;TrustServerCertificate=True"
-$env:Scoring__BaseUrl = "http://127.0.0.1:8000"
+$env:Scoring__BaseAddress = "http://127.0.0.1:8000"
 $env:Identity__Authority = "https://issuer.example.invalid/"
 $env:Identity__Audience = "adpulse-api"
 dotnet run --project src/AdPulse.Api --urls http://127.0.0.1:8080

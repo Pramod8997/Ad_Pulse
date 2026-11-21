@@ -183,6 +183,13 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
             entity.Property(x => x.Score).HasPrecision(9, 4);
             entity.Property(x => x.Severity).HasMaxLength(16).IsRequired();
             entity.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.IncidentStatus).HasMaxLength(24);
+            entity.Property(x => x.OwnerSubjectId).HasMaxLength(128);
+            entity.Property(x => x.AssignedAt).HasPrecision(0);
+            entity.Property(x => x.ResolutionSummary).HasMaxLength(2000);
+            entity.Property(x => x.FalsePositiveReason).HasMaxLength(2000);
+            entity.Property(x => x.ResolvedAt).HasPrecision(0);
+            entity.Property(x => x.ResolvedBySubjectId).HasMaxLength(128);
             entity.Property(x => x.Observed).HasPrecision(19, 4);
             entity.Property(x => x.Baseline).HasPrecision(19, 4);
             entity.Property(x => x.Confidence).HasPrecision(9, 4);
@@ -196,6 +203,9 @@ public sealed class AdPulseDbContext(DbContextOptions<AdPulseDbContext> options,
             entity.HasIndex(x => new { x.TenantId, x.Status, x.DetectedAt })
                 .IsDescending(false, false, true)
                 .HasDatabaseName("IX_Alerts_Tenant_Status_DetectedAt");
+            entity.HasIndex(x => new { x.TenantId, x.OwnerSubjectId, x.IncidentStatus, x.DetectedAt })
+                .IsDescending(false, false, false, true)
+                .HasDatabaseName("IX_Alerts_Tenant_Owner_IncidentStatus_DetectedAt");
             entity.HasOne(x => x.Campaign)
                 .WithMany(x => x.Alerts)
                 .HasForeignKey(x => new { x.TenantId, x.CampaignId })

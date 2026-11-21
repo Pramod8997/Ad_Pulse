@@ -1,0 +1,13 @@
+{
+  "project": "AdPulse Change-Only Evolution Pack",
+  "version": "1.0",
+  "generated_date": "2026-11-03",
+  "files": [
+    "README.md",
+    "docs/01-change-only-strategy.md",
+    "docs/02-phase-1-gpt6-astra-change-prompt.md",
+    "docs/03-phase-2-gpt6-1-sol-change-prompt.md",
+    "docs/04-twenty-agent-change-ownership.md",
+    "docs/05-change-acceptance-checklist.md"
+  ]
+}

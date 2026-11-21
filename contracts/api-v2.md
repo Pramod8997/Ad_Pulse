@@ -41,8 +41,13 @@ selects a tenant or grants access.
 | `GET /app/imports` | import permission | Import history |
 | `POST /app/imports` | import permission | Upload and validate a CSV (`file` multipart field) |
 | `GET /app/imports/{importId}` | import permission | Import result and bounded row errors |
-| `GET /app/alerts` | tenant member | Stable cursor-paged alerts |
+| `GET /app/alerts` | tenant member | Stable cursor-paged alerts and incident ownership/state |
+| `GET /app/alerts/{alertId}` | tenant member | Alert evidence and incident detail/timeline |
 | `PATCH /app/alerts/{alertId}` | tenant member | Acknowledge, resolve or reopen an alert |
+| `PATCH /app/alerts/{alertId}/incident` | tenant member | Advance the incident state with confirmation and required final summary/reason |
+| `PATCH /app/alerts/{alertId}/assignment` | tenant member | Assign or unassign a same-tenant owner |
+| `POST /app/alerts/{alertId}/notes` | tenant member | Append a bounded investigation note |
+| `GET /app/alerts/{alertId}/timeline` | tenant member | Read the safe, tenant-scoped incident timeline |
 | `GET /app/audit` | audit permission | Read-only stable cursor-paged audit log |
 | `GET /app/settings` | tenant admin | Tenant reporting settings |
 | `PATCH /app/settings` | tenant admin | Update tenant settings |
@@ -119,12 +124,18 @@ file body or raw rows. Import state is `validated`, `completed`, `rejected` or
 
 ## Alert DTOs
 
-Alerts expose the `scoring-v1` result fields, evidence window and lifecycle
-status (`open`, `acknowledged` or `resolved`). `confidence` is data sufficiency,
-not a probability. Fingerprints are lowercase 64-character SHA-256 values and
-are unique within a tenant. A lifecycle request contains only the target
-status and an optional reason; resolving requires a non-blank reason. The
-server owns alert IDs, tenant scope and audit writes.
+Alerts expose the `scoring-v1` result fields, evidence window and legacy lifecycle
+status (`open`, `acknowledged` or `resolved`). They also expose an additive
+incident projection with `incidentStatus` (`new`, `acknowledged`,
+`investigating`, `mitigated`, `resolved` or `false_positive`), optional owner,
+assignment time, resolution metadata and a bounded timeline. `confidence` is
+data sufficiency, not a probability. Fingerprints are lowercase 64-character
+SHA-256 values and are unique within a tenant. Existing lifecycle requests and
+routes remain valid; the incident route requires confirmation, a resolution
+summary when resolving, and a reason when marking a false positive. Notes are
+append-only and capped at 2,000 characters. The server owns alert IDs, tenant
+scope, membership validation and audit writes. Raw audit payload JSON is never
+returned.
 
 ## Audit, overview and settings DTOs
 

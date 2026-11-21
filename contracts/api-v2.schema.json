@@ -11,6 +11,22 @@
     "nonNegativeInteger": { "type": "integer", "minimum": 0 },
     "guid": { "type": "string", "format": "uuid" },
     "cursor": { "type": ["string", "null"], "maxLength": 4096 },
+    "incidentStatus": { "enum": ["new", "acknowledged", "investigating", "mitigated", "resolved", "false_positive"] },
+    "incidentTimelineEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "occurredAt", "actorSubjectId", "action"],
+      "properties": {
+        "id": { "$ref": "#/$defs/guid" },
+        "occurredAt": { "$ref": "#/$defs/utcDateTime" },
+        "actorSubjectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "note": { "type": ["string", "null"], "maxLength": 2000 },
+        "fromIncidentStatus": { "anyOf": [{ "$ref": "#/$defs/incidentStatus" }, { "type": "null" }] },
+        "toIncidentStatus": { "anyOf": [{ "$ref": "#/$defs/incidentStatus" }, { "type": "null" }] },
+        "ownerSubjectId": { "type": ["string", "null"], "maxLength": 128 }
+      }
+    },
     "kpis": {
       "type": "object",
       "additionalProperties": false,
@@ -130,7 +146,15 @@
         "scoringVersion": { "type": "string", "minLength": 1, "maxLength": 32 },
         "evidenceWindowStart": { "$ref": "#/$defs/date" },
         "evidenceWindowEnd": { "$ref": "#/$defs/date" },
-        "detectedAt": { "$ref": "#/$defs/utcDateTime" }
+        "detectedAt": { "$ref": "#/$defs/utcDateTime" },
+        "incidentStatus": { "$ref": "#/$defs/incidentStatus" },
+        "ownerSubjectId": { "type": ["string", "null"], "maxLength": 128 },
+        "assignedAt": { "anyOf": [{ "$ref": "#/$defs/utcDateTime" }, { "type": "null" }] },
+        "resolutionSummary": { "type": ["string", "null"], "maxLength": 2000 },
+        "falsePositiveReason": { "type": ["string", "null"], "maxLength": 2000 },
+        "resolvedAt": { "anyOf": [{ "$ref": "#/$defs/utcDateTime" }, { "type": "null" }] },
+        "resolvedBySubjectId": { "type": ["string", "null"], "maxLength": 128 },
+        "timeline": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/incidentTimelineEntry" } }
       }
     },
     "auditEvent": {

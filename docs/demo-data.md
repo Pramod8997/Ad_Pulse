@@ -21,14 +21,17 @@ The seed contains no passwords, access tokens, signing keys, connection strings,
 
 ## Applying the seed
 
-Apply `db/migrations/001_initial.sql` first, then run the seed against the same database:
+Apply the ordered migrations (`001_initial.sql` through `004_alert_incident_workflow.sql`) first, then run the seed against the same database:
 
 ```powershell
 sqlcmd -S $env:ADPULSE_SQL_SERVER -d $env:ADPULSE_SQL_DATABASE -E -b -i db/migrations/001_initial.sql
+sqlcmd -S $env:ADPULSE_SQL_SERVER -d $env:ADPULSE_SQL_DATABASE -E -b -i db/migrations/002_tenant_reporting_settings.sql
+sqlcmd -S $env:ADPULSE_SQL_SERVER -d $env:ADPULSE_SQL_DATABASE -E -b -i db/migrations/003_import_pending_metrics.sql
+sqlcmd -S $env:ADPULSE_SQL_SERVER -d $env:ADPULSE_SQL_DATABASE -E -b -i db/migrations/004_alert_incident_workflow.sql
 sqlcmd -S $env:ADPULSE_SQL_SERVER -d $env:ADPULSE_SQL_DATABASE -E -b -i db/seed/001_demo.sql
 ```
 
-The seed uses fixed IDs, `IF NOT EXISTS` guards, and one transaction. It is safe to rerun without deleting rows. Existing rows with those IDs are intentionally left unchanged; use a fresh local database when a clean dataset is needed. The migration is a one-time script and is not idempotent.
+The seed uses fixed IDs, `IF NOT EXISTS` guards, and one transaction. It is safe to rerun without deleting rows. Existing rows with those IDs are intentionally left unchanged; use a fresh local database when a clean dataset is needed. The ordered migration scripts are one-time scripts and are not idempotent.
 
 ## UI disclosure requirement
 

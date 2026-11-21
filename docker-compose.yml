@@ -62,7 +62,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://0.0.0.0:8080
       ConnectionStrings__AdPulse: Server=sqlserver,1433;Database=AdPulse;User Id=sa;Password=${MSSQL_SA_PASSWORD:-AdPulseLocal!2026};TrustServerCertificate=True
-      Scoring__BaseUrl: http://scorer:8000
+      Scoring__BaseAddress: http://scorer:8000
       Identity__Authority: http://localhost:8081
       Identity__Audience: adpulse-api
       Identity__RequireHttpsMetadata: "false"

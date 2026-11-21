@@ -1,4 +1,5 @@
-export type AlertStatus = 'open' | 'acknowledged' | 'resolved' | 'unknown'
+export type IncidentStatus = 'new' | 'acknowledged' | 'investigating' | 'mitigated' | 'resolved' | 'false_positive'
+export type AlertStatus = 'open' | 'acknowledged' | 'resolved' | IncidentStatus | 'unknown'
 export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low' | 'none' | 'unknown'
 export type AlertAction = 'acknowledge' | 'resolve' | 'reopen'
 
@@ -9,6 +10,8 @@ export interface AlertFilters {
   campaign: string
   dateFrom: string
   dateTo: string
+  incidentStatus: IncidentStatus | ''
+  owner: string
 }
 
 export interface AlertSummary {
@@ -27,6 +30,20 @@ export interface AlertSummary {
   dataSufficiency: 'insufficient' | 'sufficient' | 'unknown'
   detectedAt: string | null
   updatedAt: string | null
+  incidentStatus: IncidentStatus
+  ownerSubjectId: string | null
+  assignedAt: string | null
+}
+
+export interface IncidentTimelineEntry {
+  id: string
+  occurredAt: string | null
+  actorSubjectId: string | null
+  action: string
+  note: string | null
+  fromIncidentStatus: IncidentStatus | null
+  toIncidentStatus: IncidentStatus | null
+  ownerSubjectId: string | null
 }
 
 export interface AlertDetail extends AlertSummary {
@@ -39,6 +56,11 @@ export interface AlertDetail extends AlertSummary {
   dataSufficiency: 'insufficient' | 'sufficient' | 'unknown'
   reasonCodes: string[]
   recommendedChecks: string[]
+  resolutionSummary: string | null
+  falsePositiveReason: string | null
+  resolvedAt: string | null
+  resolvedBySubjectId: string | null
+  timeline: IncidentTimelineEntry[]
 }
 
 export interface AlertListResponse {
@@ -56,4 +78,7 @@ export interface AlertApi {
   list(filters: AlertFilters, cursor?: string | null): Promise<AlertListResponse>
   get(id: string): Promise<AlertDetail>
   mutate(id: string, action: AlertAction, reason: string): Promise<AlertDetail | null>
+  changeIncident(id: string, status: IncidentStatus, summary: string): Promise<AlertDetail | null>
+  assign(id: string, ownerSubjectId: string | null): Promise<AlertDetail | null>
+  addNote(id: string, note: string): Promise<AlertDetail | null>
 }

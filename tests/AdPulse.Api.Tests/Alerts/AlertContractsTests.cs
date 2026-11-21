@@ -42,6 +42,25 @@ public sealed class AlertContractsTests
     }
 
     [Fact]
+    public void Incident_transitions_require_final_reason_and_confirmation()
+    {
+        Assert.Throws<AlertValidationException>(() => new IncidentStatusChangeRequest("investigating").Validate());
+        Assert.Throws<AlertValidationException>(() => new IncidentStatusChangeRequest("resolved", null, true).Validate());
+        Assert.Throws<AlertValidationException>(() => new IncidentStatusChangeRequest("false_positive", " ", true).Validate());
+        Assert.Equal((IncidentStatuses.Resolved, "validated and fixed"), new IncidentStatusChangeRequest(" resolved ", " validated and fixed ", true).Validate());
+    }
+
+    [Fact]
+    public void Incident_notes_and_assignment_are_bounded()
+    {
+        Assert.Equal("checked tracking", new IncidentNoteRequest(" checked tracking ").Validate());
+        Assert.Throws<AlertValidationException>(() => new IncidentNoteRequest(new string('x', 2001)).Validate());
+        Assert.Equal("operator-2", new AlertAssignmentRequest(" operator-2 ", true).Validate());
+        Assert.Null(new AlertAssignmentRequest(null, true).Validate());
+        Assert.Throws<AlertValidationException>(() => new AlertAssignmentRequest("operator-2").Validate());
+    }
+
+    [Fact]
     public void Scored_alert_rejects_noncanonical_fingerprint()
     {
         var scored = ValidScoredAlert() with { Fingerprint = "not-a-fingerprint" };

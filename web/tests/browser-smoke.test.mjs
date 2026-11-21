@@ -296,19 +296,33 @@ describe("AdPulse browser smoke", () => {
     assert.equal(tenantControls, 0, "campaign form exposed a tenant selector or tenant ID field");
   });
 
-  smoke("alert acknowledge/resolve actions require visible confirmation", async () => {
+  smoke("incident lifecycle actions require visible confirmation", async () => {
     await page.goto("/app/alerts");
     const snapshot = await page.snapshot();
     if (isProtectedRedirect(snapshot)) return;
-    const actionFound = await page.clickByText(/acknowledge|resolve|reopen/);
+    const actionFound = await page.clickByText(/acknowledge|investigate|mitigate|resolve|false positive|reopen/);
     if (!actionFound) {
-      assert.match(snapshot.text, /no alerts|empty|nothing/i, "alerts page has no lifecycle action or empty state");
+       assert.match(snapshot.text, /no alerts|no incidents|empty|nothing/i, "incident inbox has no lifecycle action or empty state");
       return;
     }
     await delay(100);
     const afterClick = await page.snapshot();
-    assert.ok(afterClick.hasDialog || /confirm|are you sure|reason|resolve this|acknowledge this/i.test(afterClick.text),
-      "alert lifecycle action did not show a confirmation or reason prompt");
+     assert.ok(afterClick.hasDialog || /confirm|are you sure|reason|resolve this|acknowledge this|investigat|mitigat|false.?positive/i.test(afterClick.text),
+       "incident lifecycle action did not show a confirmation or reason prompt");
+  });
+
+  smoke("incident inbox exposes ownership and timeline language when detail is available", async () => {
+    await page.goto("/app/alerts");
+    const snapshot = await page.snapshot();
+    if (isProtectedRedirect(snapshot)) return;
+    const detailFound = await page.clickByText(/investigate|acknowledge|resolve|incident/i);
+    if (!detailFound) {
+      assert.match(snapshot.text, /no alerts|no incidents|empty|nothing/i, "incident inbox has no detail or empty state");
+      return;
+    }
+    await delay(150);
+    const detail = await page.snapshot();
+    assert.ok(/owner|timeline|investigation|evidence/i.test(detail.text), "incident detail omitted operational workflow context");
   });
 
   smoke("invalid import files produce a rejection state", async () => {

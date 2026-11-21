@@ -14,8 +14,12 @@ public static class AlertEndpoints
     {
         var group = endpoints.MapGroup("/app/alerts").RequireAuthorization();
         group.MapGet("", ListAsync);
+        group.MapGet("/{id:guid}/timeline", TimelineAsync);
         group.MapGet("/{id:guid}", GetAsync);
         group.MapPatch("/{id:guid}", ChangeStatusAsync);
+        group.MapPatch("/{id:guid}/incident", ChangeIncidentStatusAsync);
+        group.MapPatch("/{id:guid}/assignment", AssignAsync);
+        group.MapPost("/{id:guid}/notes", AddNoteAsync);
         group.MapPost("/{id:guid}/acknowledge", AcknowledgeAsync);
         group.MapPost("/{id:guid}/resolve", ResolveAsync);
         group.MapPost("/{id:guid}/reopen", ReopenAsync);
@@ -70,6 +74,57 @@ public static class AlertEndpoints
             httpContext,
             tenantResolver,
             tenant => service.ChangeStatusAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
+
+    private static Task<IResult> ChangeIncidentStatusAsync(
+        Guid id,
+        IncidentStatusChangeRequest? request,
+        HttpContext httpContext,
+        TenantContextResolver tenantResolver,
+        AlertService service,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            httpContext,
+            tenantResolver,
+            tenant => service.ChangeIncidentStatusAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
+
+    private static Task<IResult> AssignAsync(
+        Guid id,
+        AlertAssignmentRequest? request,
+        HttpContext httpContext,
+        TenantContextResolver tenantResolver,
+        AlertService service,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            httpContext,
+            tenantResolver,
+            tenant => service.AssignAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
+
+    private static Task<IResult> AddNoteAsync(
+        Guid id,
+        IncidentNoteRequest? request,
+        HttpContext httpContext,
+        TenantContextResolver tenantResolver,
+        AlertService service,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            httpContext,
+            tenantResolver,
+            tenant => service.AddNoteAsync(tenant, id, request!, cancellationToken),
+            cancellationToken);
+
+    private static Task<IResult> TimelineAsync(
+        Guid id,
+        HttpContext httpContext,
+        TenantContextResolver tenantResolver,
+        AlertService service,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            httpContext,
+            tenantResolver,
+            tenant => service.GetTimelineAsync(tenant, id, cancellationToken),
             cancellationToken);
 
     private static Task<IResult> ResolveAsync(

@@ -7,7 +7,10 @@ import type {
   AlertSeverity,
   AlertStatus,
   AlertSummary,
+  IncidentStatus,
+  IncidentTimelineEntry,
 } from './types'
+import { apiClient, ApiClientError } from '../../api'
 
 const alertsPath = '/app/alerts'
 
@@ -60,6 +63,15 @@ function statusValue(value: unknown): AlertStatus {
   return 'unknown'
 }
 
+function incidentStatusValue(value: unknown): IncidentStatus {
+  const status = String(value ?? '').toLowerCase()
+  if (status === 'false-positive') return 'false_positive'
+  if (status === 'new' || status === 'acknowledged' || status === 'investigating' || status === 'mitigated' || status === 'resolved' || status === 'false_positive') {
+    return status
+  }
+  return 'new'
+}
+
 function severityValue(value: unknown): AlertSeverity {
   const severity = String(value ?? '').toLowerCase()
   if (severity === 'critical' || severity === 'high' || severity === 'medium' || severity === 'low' || severity === 'none') {
@@ -93,7 +105,35 @@ function summaryValue(raw: unknown): AlertSummary {
     dataSufficiency: dataSufficiency === 'sufficient' || dataSufficiency === 'insufficient' ? dataSufficiency : 'unknown',
     detectedAt: stringValue(first(value, 'detectedAt', 'detected_at', 'createdAt', 'created_at')),
     updatedAt: stringValue(first(value, 'updatedAt', 'updated_at')),
+    incidentStatus: incidentStatusValue(first(value, 'incidentStatus', 'incident_status')),
+    ownerSubjectId: stringValue(first(value, 'ownerSubjectId', 'owner_subject_id')),
+    assignedAt: stringValue(first(value, 'assignedAt', 'assigned_at')),
   }
+}
+
+function timelineValue(value: unknown): IncidentTimelineEntry[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    const item = asObject(entry)
+    const id = stringValue(item.id)
+    const action = stringValue(item.action)
+    if (!id || !action) return []
+    return [{
+      id,
+      occurredAt: stringValue(item.occurredAt ?? item.occurred_at),
+      actorSubjectId: stringValue(item.actorSubjectId ?? item.actor_subject_id),
+      action,
+      note: stringValue(item.note),
+      fromIncidentStatus: incidentStatusValueOrNull(item.fromIncidentStatus ?? item.from_incident_status),
+      toIncidentStatus: incidentStatusValueOrNull(item.toIncidentStatus ?? item.to_incident_status),
+      ownerSubjectId: stringValue(item.ownerSubjectId ?? item.owner_subject_id),
+    }]
+  })
+}
+
+function incidentStatusValueOrNull(value: unknown): IncidentStatus | null {
+  if (value === null || value === undefined || value === '') return null
+  return incidentStatusValue(value)
 }
 
 function detailValue(raw: unknown): AlertDetail {
@@ -111,10 +151,15 @@ function detailValue(raw: unknown): AlertDetail {
     dataSufficiency: dataSufficiency === 'sufficient' || dataSufficiency === 'insufficient' ? dataSufficiency : 'unknown',
     reasonCodes: stringArray(first(value, 'reasonCodes', 'reason_codes')),
     recommendedChecks: stringArray(first(value, 'recommendedChecks', 'recommended_checks')),
+    resolutionSummary: stringValue(first(value, 'resolutionSummary', 'resolution_summary')),
+    falsePositiveReason: stringValue(first(value, 'falsePositiveReason', 'false_positive_reason')),
+    resolvedAt: stringValue(first(value, 'resolvedAt', 'resolved_at')),
+    resolvedBySubjectId: stringValue(first(value, 'resolvedBySubjectId', 'resolved_by_subject_id')),
+    timeline: timelineValue(first(value, 'timeline')),
   }
 }
 
-function listValue(raw: unknown, response: Response): AlertListResponse {
+function listValue(raw: unknown, response?: Response): AlertListResponse {
   const envelope = asObject(raw)
   const rawItems = Array.isArray(raw) ? raw : first(envelope, 'items', 'alerts', 'data')
   const items = Array.isArray(rawItems) ? rawItems.map(summaryValue).filter((item) => item.id !== '') : []
@@ -127,7 +172,7 @@ function listValue(raw: unknown, response: Response): AlertListResponse {
     lastSuccessfulRefresh: stringValue(first(envelope, 'lastSuccessfulRefresh', 'last_successful_refresh')),
     partial: first(envelope, 'partial', 'isPartial', 'is_partial') === true,
     stale: first(envelope, 'stale', 'isStale', 'is_stale') === true,
-    correlationId: response.headers.get('x-correlation-id') ?? stringValue(first(envelope, 'correlationId', 'correlation_id')),
+    correlationId: response?.headers.get('x-correlation-id') ?? stringValue(first(envelope, 'correlationId', 'correlation_id')),
   }
 }
 
@@ -137,13 +182,15 @@ function apiBase(value?: string): string {
 }
 
 function queryString(filters: AlertFilters, cursor: string | null | undefined): string {
-  const params = new URLSearchParams({ page: '1', pageSize: '25' })
+  const params = new URLSearchParams({ limit: '25' })
   if (filters.status) params.set('status', filters.status)
   if (filters.severity) params.set('severity', filters.severity)
-  if (filters.metric.trim()) params.set('metricName', filters.metric.trim())
+  if (filters.metric.trim()) params.set('metric', filters.metric.trim().toLowerCase())
   if (filters.campaign.trim()) params.set('campaignId', filters.campaign.trim())
   if (filters.dateFrom) params.set('from', filters.dateFrom)
   if (filters.dateTo) params.set('to', filters.dateTo)
+  if (filters.incidentStatus) params.set('incidentStatus', filters.incidentStatus)
+  if (filters.owner.trim()) params.set('ownerSubjectId', filters.owner.trim())
   if (cursor) params.set('cursor', cursor)
   const encoded = params.toString()
   return encoded ? `?${encoded}` : ''
@@ -178,19 +225,43 @@ async function request(base: string, path: string, init?: RequestInit): Promise<
   return { value, response }
 }
 
+async function sharedRequest(path: string, options: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown } = {}): Promise<unknown> {
+  try {
+    return await apiClient.request<unknown>(path, options)
+  } catch (error) {
+    if (error instanceof ApiClientError) {
+      throw new AlertApiError(error.message, error.status ?? 0, error.correlationId)
+    }
+    throw error
+  }
+}
+
 export function createAlertApi(baseUrl?: string): AlertApi {
   const base = apiBase(baseUrl)
+  const useSharedClient = baseUrl === undefined
   return {
     async list(filters, cursor) {
+      if (useSharedClient) return listValue(await sharedRequest(`${alertsPath}${queryString(filters, cursor)}`))
       const result = await request(base, `${alertsPath}${queryString(filters, cursor)}`)
       return listValue(result.value, result.response)
     },
     async get(id) {
+      if (useSharedClient) {
+        const value = await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}`)
+        const payload = asObject(value)
+        return detailValue(first(payload, 'alert', 'data') ?? value)
+      }
       const result = await request(base, `${alertsPath}/${encodeURIComponent(id)}`)
       const payload = asObject(result.value)
       return detailValue(first(payload, 'alert', 'data') ?? result.value)
     },
     async mutate(id, action, reason) {
+      if (useSharedClient) {
+        const value = await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: { confirm: true, reason } })
+        if (value === null) return null
+        const payload = asObject(value)
+        return detailValue(first(payload, 'alert', 'data') ?? value)
+      }
       const result = await request(base, `${alertsPath}/${encodeURIComponent(id)}/${action}`, {
         method: 'POST',
         body: JSON.stringify({ confirm: true, reason }),
@@ -198,6 +269,33 @@ export function createAlertApi(baseUrl?: string): AlertApi {
       if (result.value === null) return null
       const payload = asObject(result.value)
       return detailValue(first(payload, 'alert', 'data') ?? result.value)
+    },
+    async changeIncident(id, status, summary) {
+      const body = { status, summary, confirm: true }
+      const value = useSharedClient
+        ? await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/incident`, { method: 'PATCH', body })
+        : (await request(base, `${alertsPath}/${encodeURIComponent(id)}/incident`, { method: 'PATCH', body: JSON.stringify(body) })).value
+      if (value === null) return null
+      const payload = asObject(value)
+      return detailValue(first(payload, 'alert', 'data') ?? value)
+    },
+    async assign(id, ownerSubjectId) {
+      const body = { ownerSubjectId, confirm: true }
+      const value = useSharedClient
+        ? await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/assignment`, { method: 'PATCH', body })
+        : (await request(base, `${alertsPath}/${encodeURIComponent(id)}/assignment`, { method: 'PATCH', body: JSON.stringify(body) })).value
+      if (value === null) return null
+      const payload = asObject(value)
+      return detailValue(first(payload, 'alert', 'data') ?? value)
+    },
+    async addNote(id, note) {
+      const body = { note }
+      const value = useSharedClient
+        ? await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/notes`, { method: 'POST', body })
+        : (await request(base, `${alertsPath}/${encodeURIComponent(id)}/notes`, { method: 'POST', body: JSON.stringify(body) })).value
+      if (value === null) return null
+      const payload = asObject(value)
+      return detailValue(first(payload, 'alert', 'data') ?? value)
     },
   }
 }
