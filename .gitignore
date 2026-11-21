@@ -1,6 +1,9 @@
 # Local tooling
 .tools/
 
+# Change packs & local documentation
+AdPulse_Change_Only_Pack/docs/
+
 # .NET & C# build artifacts
 **/bin/
 **/obj/
