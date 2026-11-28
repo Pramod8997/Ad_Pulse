@@ -73,6 +73,56 @@ public sealed class CampaignValidationTests
         Assert.Contains(nameof(CampaignWriteRequest.EndsOn), errors.Keys);
     }
 
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("createdAt", "desc")]
+    [InlineData("CREATEDAT", "ASC")]
+    [InlineData("name", "asc")]
+    [InlineData("status", "desc")]
+    [InlineData("budget", "asc")]
+    public void Accepts_valid_list_query_sort_and_direction(string? sort, string? direction)
+    {
+        var errors = CampaignValidation.Validate(new CampaignListQuery
+        {
+            Sort = sort,
+            Direction = direction
+        });
+
+        Assert.Empty(errors);
+    }
+
+    [Theory]
+    [InlineData("", "desc")]
+    [InlineData("   ", "asc")]
+    [InlineData("spend", "desc")]
+    [InlineData("createdAt", "")]
+    [InlineData("name", "sideways")]
+    public void Rejects_invalid_list_query_sort_and_direction(string sort, string direction)
+    {
+        var errors = CampaignValidation.Validate(new CampaignListQuery
+        {
+            Sort = sort,
+            Direction = direction
+        });
+
+        Assert.True(
+            errors.ContainsKey(nameof(CampaignListQuery.Sort))
+            || errors.ContainsKey(nameof(CampaignListQuery.Direction)));
+    }
+
+    [Fact]
+    public void Rejects_both_invalid_sort_and_invalid_direction_with_field_errors()
+    {
+        var errors = CampaignValidation.Validate(new CampaignListQuery
+        {
+            Sort = "unknown",
+            Direction = "up"
+        });
+
+        Assert.Contains(nameof(CampaignListQuery.Sort), errors.Keys);
+        Assert.Contains(nameof(CampaignListQuery.Direction), errors.Keys);
+    }
+
     private static CampaignWriteRequest ValidRequest => new()
     {
         Name = "Spring campaign",

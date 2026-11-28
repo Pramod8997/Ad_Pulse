@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import ImportHistoryPanel from '../components/imports/ImportHistoryPanel.vue';
 import ImportPreviewPanel from '../components/imports/ImportPreviewPanel.vue';
 import ImportResultPanel from '../components/imports/ImportResultPanel.vue';
 import ImportStepIndicator from '../components/imports/ImportStepIndicator.vue';
@@ -30,6 +31,7 @@ const downloadingTemplate = ref(false);
 const loadingPreview = ref(false);
 const confirming = ref(false);
 const forceStalePreview = ref(false);
+const historyRefreshKey = ref(0);
 const clock = ref(Date.now());
 let clockTimer: number | undefined;
 
@@ -38,8 +40,12 @@ const previewIsStale = computed(() => {
     return false;
   }
 
-  const expiresAt = Date.parse(preview.value.expiresAt);
-  return forceStalePreview.value || (Number.isFinite(expiresAt) && expiresAt <= clock.value);
+  if (forceStalePreview.value) {
+    return true;
+  }
+
+  const expiresAt = preview.value.expiresAt ? Date.parse(preview.value.expiresAt) : Number.NaN;
+  return Number.isFinite(expiresAt) && expiresAt <= clock.value;
 });
 
 const currentStep = computed<'select' | 'preview' | 'result'>(() => {
@@ -161,6 +167,7 @@ async function requestPreview(file: File): Promise<void> {
 
   try {
     preview.value = await api.value.preview(file);
+    historyRefreshKey.value += 1;
   } catch (value) {
     setError(value, 'The CSV could not be previewed. Check the file and try again.', 'preview');
   } finally {
@@ -179,7 +186,7 @@ async function onFileSelected(event: Event): Promise<void> {
 }
 
 async function confirmImport(): Promise<void> {
-  if (!preview.value || previewIsStale.value || preview.value.acceptedRows === 0) {
+  if (!preview.value || previewIsStale.value || preview.value.status === 'failed' || preview.value.acceptedRows === 0) {
     return;
   }
 
@@ -192,6 +199,7 @@ async function confirmImport(): Promise<void> {
     preview.value = null;
     selectedFile.value = null;
     resetInput();
+    historyRefreshKey.value += 1;
   } catch (value) {
     const apiError = asApiError(value, 'The import could not be confirmed. Try again.');
     if (apiError.status === 409 || apiError.status === 410) {
@@ -367,6 +375,8 @@ onBeforeUnmount(() => {
         </div>
         <p class="empty-note">No CSV selected yet.</p>
       </section>
+
+      <ImportHistoryPanel :api="api" :refresh-key="historyRefreshKey" />
     </template>
   </main>
 </template>

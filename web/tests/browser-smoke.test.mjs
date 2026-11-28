@@ -252,7 +252,7 @@ function smoke(name, callback) {
 }
 
 function isProtectedRedirect(snapshot) {
-  return /\/sign-in(?:[/?#]|$)/i.test(snapshot.url) || authCopy.test(snapshot.text);
+  return /\/(?:sign-in|forbidden)(?:[/?#]|$)/i.test(snapshot.url) || authCopy.test(snapshot.text);
 }
 
 describe("AdPulse browser smoke", () => {
@@ -264,8 +264,8 @@ describe("AdPulse browser smoke", () => {
     await closeBrowser();
   });
 
-  smoke("protected navigation does not expose the application shell", async () => {
-    for (const route of ["/app", "/app/campaigns", "/app/alerts", "/app/imports"]) {
+  smoke("protected navigation and auth/forbidden routes do not expose the application shell", async () => {
+    for (const route of ["/sign-in", "/forbidden", "/app", "/app/campaigns", "/app/alerts", "/app/imports", "/app/audit", "/app/settings"]) {
       await page.goto(route);
       const snapshot = await page.snapshot();
       assert.ok(
@@ -300,7 +300,12 @@ describe("AdPulse browser smoke", () => {
     await page.goto("/app/alerts");
     const snapshot = await page.snapshot();
     if (isProtectedRedirect(snapshot)) return;
-    const actionFound = await page.clickByText(/acknowledge|investigate|mitigate|resolve|false positive|reopen/);
+    await page.evaluate(`(() => {
+      const row = document.querySelector("tbody tr[tabindex='0']");
+      if (row) row.click();
+    })()`);
+    await delay(150);
+    const actionFound = await page.clickByText(/acknowledge|investigate|investigating|mitigate|mitigated|resolve|resolved|false positive|reopen/);
     if (!actionFound) {
        assert.match(snapshot.text, /no alerts|no incidents|empty|nothing/i, "incident inbox has no lifecycle action or empty state");
       return;
@@ -311,11 +316,17 @@ describe("AdPulse browser smoke", () => {
        "incident lifecycle action did not show a confirmation or reason prompt");
   });
 
-  smoke("incident inbox exposes ownership and timeline language when detail is available", async () => {
+  smoke("incident inbox exposes ownership, pagination, and timeline language when detail is available", async () => {
     await page.goto("/app/alerts");
     const snapshot = await page.snapshot();
     if (isProtectedRedirect(snapshot)) return;
-    const detailFound = await page.clickByText(/investigate|acknowledge|resolve|incident/i);
+    const openedRow = await page.evaluate(`(() => {
+      const row = document.querySelector("tbody tr[tabindex='0']");
+      if (!row) return false;
+      row.click();
+      return true;
+    })()`);
+    const detailFound = openedRow || await page.clickByText(/investigate|acknowledge|resolve|incident/i);
     if (!detailFound) {
       assert.match(snapshot.text, /no alerts|no incidents|empty|nothing/i, "incident inbox has no detail or empty state");
       return;
@@ -323,6 +334,7 @@ describe("AdPulse browser smoke", () => {
     await delay(150);
     const detail = await page.snapshot();
     assert.ok(/owner|timeline|investigation|evidence/i.test(detail.text), "incident detail omitted operational workflow context");
+    assert.ok(/previous|next|page \d+/i.test(detail.text), "incident inbox omitted pagination controls");
   });
 
   smoke("invalid import files produce a rejection state", async () => {

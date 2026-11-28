@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import type { CampaignPerformanceRow } from './types'
 
 const props = defineProps<{ rows: CampaignPerformanceRow[] }>()
@@ -54,7 +55,7 @@ function date(value: string | null): string {
             <th scope="col" :aria-sort="sortKey === 'roas' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by ROAS, ${sortLabel('roas')}`" @click="setSort('roas')">ROAS</button></th>
             <th scope="col" :aria-sort="sortKey === 'lastMetricDate' ? sortDirection : 'none'"><button type="button" class="sort-button" :aria-label="`Sort by last metric date, ${sortLabel('lastMetricDate')}`" @click="setSort('lastMetricDate')">Last metric</button></th>
           </tr></thead>
-          <tbody><tr v-for="row in pageRows" :key="row.campaignId"><th scope="row">{{ row.campaignName }}</th><td>{{ row.status || '—' }}</td><td>{{ money(row.budget, row.currency) }}</td><td>{{ money(row.spend, row.currency) }}</td><td>{{ money(row.cpc, row.currency) }}</td><td>{{ money(row.cpa, row.currency) }}</td><td>{{ number(row.roas) }}</td><td>{{ date(row.lastMetricDate) }}</td></tr></tbody>
+          <tbody><tr v-for="row in pageRows" :key="row.campaignId"><th scope="row"><RouterLink class="campaign-link" :to="`/app/campaigns/${encodeURIComponent(row.campaignId)}`">{{ row.campaignName }}</RouterLink></th><td>{{ row.status || '—' }}</td><td>{{ money(row.budget, row.currency) }}</td><td>{{ money(row.spend, row.currency) }}</td><td>{{ money(row.cpc, row.currency) }}</td><td>{{ money(row.cpa, row.currency) }}</td><td>{{ number(row.roas) }}</td><td>{{ date(row.lastMetricDate) }}</td></tr></tbody>
         </table>
       </div>
       <nav v-if="totalPages > 1" class="pagination" aria-label="Campaign performance pages"><button type="button" class="overview-button" :disabled="page === 1" @click="page -= 1">Previous</button><span>Page {{ page }} of {{ totalPages }}</span><button type="button" class="overview-button" :disabled="page === totalPages" @click="page += 1">Next</button></nav>
@@ -74,8 +75,10 @@ th, td { padding: 11px 14px; border-bottom: 1px solid var(--border, #e4e7ec); te
 th:first-child, td:first-child { text-align: left; }
 thead th { background: var(--surface-subtle, #f8fafc); color: var(--text-secondary, #667085); font-weight: 600; }
 tbody th { font-weight: 600; }
+.campaign-link { color: var(--accent, #176b64); text-decoration: none; }
+.campaign-link:hover { text-decoration: underline; }
 .sort-button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; margin: -6px -8px; padding: 6px 8px; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; }
-.sort-button:focus-visible, .overview-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #2e90fa) 45%, transparent); outline-offset: 2px; }
+.campaign-link:focus-visible, .sort-button:focus-visible, .overview-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #2e90fa) 45%, transparent); outline-offset: 2px; }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 14px 20px; color: var(--text-secondary, #667085); font-size: 13px; }
 .overview-button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border, #e4e7ec); border-radius: 6px; background: var(--surface, #fff); color: var(--text-primary, #182230); font: inherit; cursor: pointer; }
 .overview-button:disabled { cursor: not-allowed; opacity: .5; }

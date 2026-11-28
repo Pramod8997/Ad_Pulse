@@ -1,4 +1,3 @@
-import { h, defineComponent } from 'vue'
 import type { Pinia } from 'pinia'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
@@ -7,9 +6,11 @@ import AlertsView from './views/AlertsView.vue'
 import AuditView from './views/AuditView.vue'
 import CampaignDetailView from './views/CampaignDetailView.vue'
 import CampaignsView from './views/CampaignsView.vue'
+import ForbiddenView from './views/ForbiddenView.vue'
 import ImportsView from './views/ImportsView.vue'
 import OverviewView from './views/OverviewView.vue'
 import SettingsView from './views/SettingsView.vue'
+import SignInView from './views/SignInView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -19,17 +20,16 @@ declare module 'vue-router' {
   }
 }
 
-const RouteOutlet = defineComponent({
-  name: 'RouteOutlet',
-  setup() {
-    return () => h('main', { id: 'main-content', class: 'route-outlet', tabindex: '-1' })
-  },
-})
+function hasRequiredRole(auth: ReturnType<typeof useAuthStore>, requiredRole: string): boolean {
+  if (auth.hasRole(requiredRole)) return true
+  if (requiredRole === 'tenant-admin') return auth.hasRole('tenant_admin')
+  return false
+}
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: { name: 'overview' } },
-  { path: '/sign-in', name: 'sign-in', component: RouteOutlet },
-  { path: '/forbidden', name: 'forbidden', component: RouteOutlet },
+  { path: '/sign-in', name: 'sign-in', component: SignInView },
+  { path: '/forbidden', name: 'forbidden', component: ForbiddenView },
   {
     path: '/app',
     name: 'overview',
@@ -96,12 +96,12 @@ export function createAppRouter(pinia: Pinia) {
       return { name: 'sign-in', query: { redirect: to.fullPath } }
     }
 
-    if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
-      return { name: 'forbidden' }
+    if (to.meta.requiredRole && !hasRequiredRole(auth, to.meta.requiredRole)) {
+      return { name: 'forbidden', query: { role: to.meta.requiredRole, from: to.fullPath } }
     }
 
     if (to.meta.requiredPermission && !auth.hasPermission(to.meta.requiredPermission)) {
-      return { name: 'forbidden' }
+      return { name: 'forbidden', query: { permission: to.meta.requiredPermission, from: to.fullPath } }
     }
 
     return true

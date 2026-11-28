@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import AuditFilters, { type AuditFilterModel } from '../components/audit/AuditFilters.vue'
 import AuditPagination from '../components/audit/AuditPagination.vue'
 import AuditTable, { type AuditEvent } from '../components/audit/AuditTable.vue'
@@ -23,6 +24,7 @@ type LoadState = 'loading' | 'ready' | 'empty' | 'error' | 'forbidden' | 'unauth
 
 const injectedApi = inject<TenantApi | undefined>('adpulse-api')
 const api = injectedApi?.audit ? injectedApi : { audit: createAuditApi() }
+const route = useRoute()
 const pageSize = 25
 const page = ref(1)
 const filters = ref<AuditFilterModel>({ from: '', to: '', actor: '', action: '', entity: '' })
@@ -137,6 +139,29 @@ function formatRefreshTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? 'an unknown time' : date.toLocaleString()
 }
+
+function queryText(value: unknown): string {
+  const candidate = Array.isArray(value) ? value[0] : value
+  return typeof candidate === 'string' ? candidate.trim() : ''
+}
+
+function syncRouteEntityFilter(): boolean {
+  const nextEntity = queryText(route.query.entityType) || queryText(route.query.entityId)
+  if (!nextEntity || nextEntity === filters.value.entity) return false
+  filters.value = { ...filters.value, entity: nextEntity }
+  page.value = 1
+  cursors.value = {}
+  return true
+}
+
+syncRouteEntityFilter()
+
+watch(
+  () => [route.query.entityType, route.query.entityId],
+  () => {
+    if (syncRouteEntityFilter()) load()
+  },
+)
 
 onMounted(load)
 </script>

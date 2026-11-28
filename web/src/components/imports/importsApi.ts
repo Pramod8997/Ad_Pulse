@@ -1,3 +1,5 @@
+import { getOidcAccessToken } from '../../api/token-provider';
+
 export interface ImportPolicy {
   maxFileBytes: number;
   maxRows: number;
@@ -33,14 +35,18 @@ export interface ImportRowRejection {
   message: string;
 }
 
+export type ImportPreviewStatus = 'validated' | 'failed';
+
 export interface ImportPreview {
   previewId: string;
   fileName: string;
+  status: ImportPreviewStatus;
   totalRows: number;
   acceptedRows: number;
   rejectedRows: number;
   rejections: readonly ImportRowRejection[];
   rejectionsTruncated: boolean;
+  uploadedAt: string | null;
   expiresAt: string | null;
 }
 
@@ -58,6 +64,22 @@ export interface ImportResult {
   completedAt: string | null;
 }
 
+export interface ImportHistoryItem {
+  id: string;
+  fileName: string;
+  uploadedAt: string | null;
+  status: ImportResultStatus | 'validated';
+  acceptedRows: number;
+  rejectedRows: number;
+  totalRows: number;
+}
+
+export interface ImportHistoryPage {
+  items: ImportHistoryItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface TemplateDownload {
   blob: Blob;
   fileName: string;
@@ -67,6 +89,8 @@ export interface ImportsApi {
   downloadTemplate(): Promise<TemplateDownload>;
   preview(file: File): Promise<ImportPreview>;
   confirm(previewId: string): Promise<ImportResult>;
+  list(cursor?: string | null): Promise<ImportHistoryPage>;
+  get(importId: string): Promise<ImportResult>;
 }
 
 export interface ImportsApiErrorOptions {
@@ -156,17 +180,28 @@ function parsePreview(value: unknown): ImportPreview {
     throw new ImportsApiError('The preview response was invalid.');
   }
 
-  const previewId = value.importBatchId ?? value.previewId;
+  const previewId = value.id ?? value.importBatchId ?? value.previewId;
   const acceptedRows = nonNegativeInteger(value.acceptedRows, 'accepted row count');
   const rejectedRows = nonNegativeInteger(value.rejectedRows, 'rejected row count');
+  const rawStatus = value.status;
+  const status: ImportPreviewStatus =
+    rawStatus === 'failed' || rawStatus === 'rejected' ? 'failed' : 'validated';
+  const uploadedAt = typeof value.uploadedAt === 'string'
+    ? value.uploadedAt
+    : typeof value.expiresAt === 'string'
+      ? value.expiresAt
+      : null;
+
   return {
     previewId: requiredString(previewId, 'preview identifier'),
     fileName: boundedString(value.fileName, 'selected CSV file'),
+    status,
     totalRows: nonNegativeInteger(value.totalRows ?? acceptedRows + rejectedRows, 'total row count'),
     acceptedRows,
     rejectedRows,
-    rejections: parseRejections(value.rejections),
+    rejections: parseRejections(value.errors ?? value.rejections),
     rejectionsTruncated: value.rejectionsTruncated === true,
+    uploadedAt,
     expiresAt: typeof value.expiresAt === 'string' ? value.expiresAt : null,
   };
 }
@@ -177,7 +212,13 @@ function parseResult(value: unknown): ImportResult {
   }
 
   const rawStatus = value.status;
-  if (rawStatus !== 'completed' && rawStatus !== 'validated' && rawStatus !== 'rejected' && rawStatus !== 'conflict') {
+  if (
+    rawStatus !== 'completed'
+    && rawStatus !== 'validated'
+    && rawStatus !== 'failed'
+    && rawStatus !== 'rejected'
+    && rawStatus !== 'conflict'
+  ) {
     throw new ImportsApiError('The import result contains an invalid status.');
   }
 
@@ -185,22 +226,75 @@ function parseResult(value: unknown): ImportResult {
   const rejectedRows = nonNegativeInteger(value.rejectedRows, 'rejected row count');
   const status: ImportResultStatus = rawStatus === 'completed'
     ? (rejectedRows > 0 ? 'partial' : 'completed')
-    : rawStatus === 'rejected' || rawStatus === 'conflict'
+    : rawStatus === 'failed' || rawStatus === 'rejected' || rawStatus === 'conflict'
       ? 'failed'
       : rejectedRows > 0
         ? 'partial'
         : 'completed';
+  const completedAtRaw = value.uploadedAt ?? value.completedAt;
 
   return {
-    importId: requiredString(value.importBatchId ?? value.importId, 'import identifier'),
+    importId: requiredString(value.id ?? value.importBatchId ?? value.importId, 'import identifier'),
     fileName: boundedString(value.fileName, 'selected CSV file'),
     status,
     totalRows: acceptedRows + rejectedRows,
     acceptedRows,
     rejectedRows,
-    rejections: parseRejections(value.rejections),
+    rejections: parseRejections(value.errors ?? value.rejections),
     rejectionsTruncated: value.rejectionsTruncated === true,
-    completedAt: typeof value.completedAt === 'string' ? value.completedAt : null,
+    completedAt: typeof completedAtRaw === 'string' ? completedAtRaw : null,
+  };
+}
+
+function parseHistoryItem(value: unknown): ImportHistoryItem {
+  if (!isRecord(value)) {
+    throw new ImportsApiError('The import history item was invalid.');
+  }
+
+  const acceptedRows = nonNegativeInteger(value.acceptedRows, 'accepted row count');
+  const rejectedRows = nonNegativeInteger(value.rejectedRows, 'rejected row count');
+  const rawStatus = value.status;
+  let status: ImportHistoryItem['status'];
+  if (rawStatus === 'validated') {
+    status = 'validated';
+  } else if (rawStatus === 'completed') {
+    status = rejectedRows > 0 ? 'partial' : 'completed';
+  } else if (rawStatus === 'failed' || rawStatus === 'rejected' || rawStatus === 'conflict') {
+    status = 'failed';
+  } else {
+    throw new ImportsApiError('The import history item contains an invalid status.');
+  }
+
+  const uploadedAtRaw = value.uploadedAt ?? value.completedAt;
+  return {
+    id: requiredString(value.id ?? value.importBatchId ?? value.importId, 'import identifier'),
+    fileName: boundedString(value.fileName, 'selected CSV file'),
+    uploadedAt: typeof uploadedAtRaw === 'string' ? uploadedAtRaw : null,
+    status,
+    acceptedRows,
+    rejectedRows,
+    totalRows: acceptedRows + rejectedRows,
+  };
+}
+
+function parseHistoryPage(value: unknown): ImportHistoryPage {
+  if (Array.isArray(value)) {
+    return {
+      items: value.map(parseHistoryItem),
+      nextCursor: null,
+      hasMore: false,
+    };
+  }
+
+  if (!isRecord(value)) {
+    throw new ImportsApiError('The import history response was invalid.');
+  }
+
+  const rawItems = Array.isArray(value.items) ? value.items : [];
+  return {
+    items: rawItems.map(parseHistoryItem),
+    nextCursor: typeof value.nextCursor === 'string' && value.nextCursor.length > 0 ? value.nextCursor : null,
+    hasMore: value.hasMore === true,
   };
 }
 
@@ -311,6 +405,36 @@ export function createImportsApi(
 
       return parseResult(await responseBody(response));
     },
+
+    async list(cursor?: string | null): Promise<ImportHistoryPage> {
+      const params = new URLSearchParams({ limit: '15' });
+      if (cursor) {
+        params.set('cursor', cursor);
+      }
+
+      const response = await fetcher(`${basePath}?${params.toString()}`, {
+        headers: await requestHeaders('application/json, application/problem+json'),
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        await throwApiError(response);
+      }
+
+      return parseHistoryPage(await responseBody(response));
+    },
+
+    async get(importId: string): Promise<ImportResult> {
+      const response = await fetcher(`${basePath}/${encodeURIComponent(importId)}`, {
+        headers: await requestHeaders('application/json, application/problem+json'),
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        await throwApiError(response);
+      }
+
+      return parseResult(await responseBody(response));
+    },
   };
 }
-import { getOidcAccessToken } from '../../api/token-provider';

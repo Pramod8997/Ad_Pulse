@@ -38,6 +38,7 @@ selects a tenant or grants access.
 | `PATCH /app/campaigns/{campaignId}` | tenant member | Edit a campaign |
 | `GET /app/campaigns/{campaignId}/metrics` | tenant member | Stable cursor-paged daily metrics |
 | `PUT /app/campaigns/{campaignId}/metrics/{metricDate}` | tenant member | Create or replace one daily metric key |
+| `POST /app/campaigns/{campaignId}/score` | tenant member | Evaluate campaign metrics with the Python scoring service and persist alert/incident |
 | `GET /app/imports` | import permission | Import history |
 | `POST /app/imports` | import permission | Upload and validate a CSV (`file` multipart field) |
 | `GET /app/imports/{importId}` | import permission | Import result and bounded row errors |

@@ -10,6 +10,8 @@ public static class CampaignValidation
 {
     private const decimal MaximumBudget = 999_999_999_999_999.9999m;
     private static readonly string[] ValidStatuses = ["draft", "active", "paused", "completed"];
+    private static readonly string[] ValidSorts = ["createdat", "name", "status", "budget"];
+    private static readonly string[] ValidDirections = ["asc", "desc"];
 
     public static IReadOnlyDictionary<string, string[]> Validate(CampaignWriteRequest request)
     {
@@ -122,6 +124,26 @@ public static class CampaignValidation
             Add(errors, nameof(query.EndsOnTo), "EndsOnTo must be on or after EndsOnFrom.");
         }
 
+        if (query.Sort?.Length > 32)
+        {
+            Add(errors, nameof(query.Sort), "Sort must be at most 32 characters.");
+        }
+        else if (query.Sort is not null
+            && !ValidSorts.Contains(query.Sort.Trim().ToLowerInvariant(), StringComparer.Ordinal))
+        {
+            Add(errors, nameof(query.Sort), "Sort must be createdAt, name, status or budget.");
+        }
+
+        if (query.Direction?.Length > 16)
+        {
+            Add(errors, nameof(query.Direction), "Direction must be at most 16 characters.");
+        }
+        else if (query.Direction is not null
+            && !ValidDirections.Contains(query.Direction.Trim().ToLowerInvariant(), StringComparer.Ordinal))
+        {
+            Add(errors, nameof(query.Direction), "Direction must be asc or desc.");
+        }
+
         return errors.ToDictionary(
             pair => pair.Key,
             pair => pair.Value.ToArray(),
@@ -131,6 +153,21 @@ public static class CampaignValidation
     public static string NormalizedName(string name) => name.Trim();
 
     public static string NormalizedStatus(string status) => status.Trim().ToLowerInvariant();
+
+    public static string NormalizedSort(string? sort) => sort is null
+        ? "createdAt"
+        : sort.Trim().ToLowerInvariant() switch
+        {
+            "createdat" => "createdAt",
+            "name" => "name",
+            "status" => "status",
+            "budget" => "budget",
+            _ => sort.Trim()
+        };
+
+    public static string NormalizedDirection(string? direction) => direction is null
+        ? "desc"
+        : direction.Trim().ToLowerInvariant();
 
     private static void Add(Dictionary<string, List<string>> errors, string field, string message)
     {

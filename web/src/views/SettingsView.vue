@@ -30,6 +30,7 @@ const state = ref<ViewState>('loading')
 const failure = ref<SettingsError | null>(null)
 const isSaving = ref(false)
 const isRefreshing = ref(false)
+const notConfigured = ref(false)
 let requestNumber = 0
 let activeController: AbortController | undefined
 
@@ -37,11 +38,18 @@ const hasSettings = computed(() => settings.value.length > 0)
 const isInitialLoading = computed(() => state.value === 'loading' && !hasSettings.value)
 const canUseSettings = computed(() => state.value !== 'forbidden' && state.value !== 'unauthorized')
 
+function hasTenantAdminRole(): boolean {
+  return auth.hasRole('tenant-admin') || auth.hasRole('tenant_admin')
+}
+
 function errorDetails(error: unknown): SettingsError {
-  const candidate = (error ?? {}) as { status?: number; response?: { status?: number }; correlationId?: string }
+  const candidate = (error ?? {}) as { status?: number; response?: { status?: number }; correlationId?: string; message?: string }
   const status = candidate.status ?? candidate.response?.status
   if (status === 401) return { status, message: 'Your session is not authorized to view tenant settings.' }
   if (status === 403) return { status, message: 'Only tenant administrators can view or change these settings.' }
+  if ((status === 400 || status === 422) && typeof candidate.message === 'string' && candidate.message.trim()) {
+    return { status, correlationId: candidate.correlationId, message: candidate.message }
+  }
   return {
     status,
     correlationId: candidate.correlationId,
@@ -49,7 +57,9 @@ function errorDetails(error: unknown): SettingsError {
   }
 }
 
-function applyResponse(result: TenantSettingsResponse) {
+function applyResponse(result: TenantSettingsResponse, options: { configured?: boolean } = {}) {
+  const configured = options.configured !== false
+  notConfigured.value = !configured
   settings.value = [
     {
       key: 'reportingTimeZone',
@@ -70,8 +80,8 @@ function applyResponse(result: TenantSettingsResponse) {
       required: true,
     },
   ]
-  canEdit.value = result.canEdit ?? auth.hasRole('tenant-admin')
-  updatedAt.value = result.updatedAtUtc ?? new Date().toISOString()
+  canEdit.value = result.canEdit ?? hasTenantAdminRole()
+  updatedAt.value = result.updatedAtUtc ?? (configured ? new Date().toISOString() : '')
   stale.value = result.stale === true || isOlderThanFiveMinutes(result.updatedAtUtc)
   state.value = 'ready'
 }
@@ -91,7 +101,12 @@ async function load() {
     applyResponse(result)
   } catch (error) {
     if (controller.signal.aborted || currentRequest !== requestNumber) return
-    failure.value = errorDetails(error)
+    const details = errorDetails(error)
+    if (details.status === 404) {
+      applyResponse({ reportingTimeZone: '', defaultCurrency: '', reportingCurrency: '', stale: false }, { configured: false })
+      return
+    }
+    failure.value = details
     if (hasSettings.value) stale.value = true
     if (failure.value.status === 401) state.value = 'unauthorized'
     else if (failure.value.status === 403) state.value = 'forbidden'
@@ -163,6 +178,9 @@ onMounted(load)
           <h2 id="settings-section-title">Persisted workspace settings</h2>
           <p v-if="updatedAt" :class="['refresh-note', { 'stale-note': stale }]" role="status">
             {{ stale ? 'Showing stale data. ' : '' }}Last successful refresh {{ formatRefreshTime(updatedAt) }}.
+          </p>
+          <p v-else-if="notConfigured" class="refresh-note" role="status">
+            Reporting settings have not been configured yet. Set a reporting timezone and currency to save initial defaults.
           </p>
         </div>
         <span v-if="!canEdit && hasSettings" class="status-label">Read-only access</span>

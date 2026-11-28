@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import CampaignFilters from '../components/campaigns/CampaignFilters.vue';
 import CampaignForm from '../components/campaigns/CampaignForm.vue';
 import CampaignPagination from '../components/campaigns/CampaignPagination.vue';
@@ -16,9 +16,24 @@ import {
   type CampaignWrite,
 } from '../components/campaigns/campaignApi';
 
+const route = useRoute();
 const router = useRouter();
 const pageSize = 20;
-const filters = ref<CampaignListFilters>({ search: '', status: '', startDate: '', endDate: '' });
+
+function querySearchValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+  return '';
+}
+
+const filters = ref<CampaignListFilters>({
+  search: querySearchValue(route.query.search),
+  status: '',
+  startDate: '',
+  endDate: '',
+  sort: 'createdAt',
+  direction: 'desc',
+});
 const campaigns = ref<CampaignRecord[]>([]);
 const page = ref(1);
 const totalCount = ref<number | null>(null);
@@ -64,9 +79,26 @@ async function loadCampaigns() {
   }
 }
 
+watch(() => route.query.search, (value) => {
+  const next = querySearchValue(value);
+  if (next !== filters.value.search) {
+    filters.value.search = next;
+  }
+});
+
 watch(filters, () => {
   page.value = 1;
   cursors.value = [null];
+  const currentQuerySearch = querySearchValue(route.query.search);
+  if (filters.value.search !== currentQuerySearch) {
+    const nextQuery = { ...route.query };
+    if (filters.value.search) {
+      nextQuery.search = filters.value.search;
+    } else {
+      delete nextQuery.search;
+    }
+    router.replace({ query: nextQuery });
+  }
   loadCampaigns();
 }, { deep: true, immediate: true });
 
@@ -124,7 +156,30 @@ function openDetail(campaign: CampaignRecord) { router.push(`/app/campaigns/${en
     <CampaignForm v-if="formOpen" :campaign="editingCampaign" :submitting="mutationBusy" :server-error="mutationError" @submit="saveCampaign" @cancel="formOpen = false" />
 
     <section class="content-section" aria-labelledby="campaign-list-title">
-      <div class="section-heading"><div><h2 id="campaign-list-title">All campaigns</h2><p v-if="lastSuccessfulAt" class="refresh-time">Last refreshed {{ new Date(lastSuccessfulAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}<span v-if="hasPartialData"> · Refreshing</span></p></div></div>
+      <div class="section-heading">
+        <div>
+          <h2 id="campaign-list-title">All campaigns</h2>
+          <p v-if="lastSuccessfulAt" class="refresh-time">Last refreshed {{ new Date(lastSuccessfulAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}<span v-if="hasPartialData"> · Refreshing</span></p>
+        </div>
+        <div class="sort-controls">
+          <label class="sort-field" for="campaign-sort">
+            <span>Sort by</span>
+            <select id="campaign-sort" v-model="filters.sort" :disabled="mutationBusy">
+              <option value="createdAt">Created date</option>
+              <option value="name">Name</option>
+              <option value="status">Status</option>
+              <option value="budget">Budget</option>
+            </select>
+          </label>
+          <label class="sort-field" for="campaign-sort-direction">
+            <span>Direction</span>
+            <select id="campaign-sort-direction" v-model="filters.direction" :disabled="mutationBusy">
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+          </label>
+        </div>
+      </div>
       <CampaignFilters v-model="filters" :disabled="mutationBusy" />
       <div v-if="isInitialLoading" class="loading-panel" role="status" aria-live="polite" aria-label="Loading campaigns"><div v-for="index in 5" :key="index" class="skeleton-row"><span /><span /><span /><span /></div></div>
       <div v-else-if="error && !campaigns.length" class="state-panel state-panel--error" role="alert"><h3>Campaigns could not be loaded</h3><p>{{ errorText }}</p><p v-if="correlationId" class="support-reference">Reference: {{ correlationId }}</p><button class="secondary-button" type="button" @click="retry">Try again</button></div>
@@ -150,7 +205,13 @@ h1 { margin: 0; font-size: clamp(24px, 3vw, 28px); line-height: 1.2; }
 button:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #2e90fa) 35%, transparent); outline-offset: 2px; }
 button:disabled { cursor: not-allowed; opacity: .65; }
 .content-section { display: grid; gap: 16px; }
+.section-heading { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
 .section-heading h2 { margin: 0; font-size: 18px; }
+.sort-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.sort-field { display: grid; gap: 4px; color: var(--text-secondary, #667085); font-size: 12px; font-weight: 600; }
+.sort-field select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border, #e4e7ec); border-radius: 6px; background: var(--surface, #fff); color: var(--text-primary, #182230); font: inherit; font-weight: 500; }
+.sort-field select:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #2e90fa) 35%, transparent); outline-offset: 1px; border-color: var(--focus, #2e90fa); }
+.sort-field select:disabled { cursor: not-allowed; opacity: .65; }
 .refresh-time { margin: 5px 0 0; color: var(--text-secondary, #667085); font-size: 12px; }
 .notice, .partial-banner { padding: 11px 14px; border-radius: 6px; font-size: 13px; }
 .notice { margin-bottom: 16px; }

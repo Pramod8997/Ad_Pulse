@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security;
 using System.Text;
+using System.Text.Json;
+using AdPulse.Api.Contracts;
 using AdPulse.Domain.Tenancy;
 using AdPulse.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -243,6 +245,77 @@ public sealed class ImportWorkflow
         return ToResult(batch, errors);
     }
 
+    public async Task<CursorPage<ImportResult>> ListAsync(
+        AdPulseDbContext db,
+        TenantContext tenant,
+        string? cursor = null,
+        int limit = PageQuery.DefaultLimit,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenantScope(db, tenant);
+        if (limit is < 1 or > PageQuery.MaxLimit)
+        {
+            throw new ImportValidationException(
+                "invalid_limit",
+                $"The page limit must be between 1 and {PageQuery.MaxLimit}.");
+        }
+
+        var decodedCursor = ImportCursorCodec.Decode(cursor, tenant.TenantId);
+        var batches = db.ImportBatches
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenant.TenantId);
+
+        List<ImportBatch> rows;
+        if (db.Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite")
+        {
+            // SQLite cannot translate DateTimeOffset ordering/comparisons; SQL Server keeps this server-side.
+            var candidates = await batches.ToListAsync(cancellationToken);
+            rows = candidates
+                .Where(x => IsAfterCursor(x, decodedCursor))
+                .OrderByDescending(x => x.UploadedAt.ToUniversalTime())
+                .ThenByDescending(x => x.Id)
+                .Take(limit + 1)
+                .ToList();
+        }
+        else
+        {
+            if (decodedCursor is not null)
+            {
+                batches = batches.Where(x =>
+                    x.UploadedAt < decodedCursor.UploadedAt
+                    || (x.UploadedAt == decodedCursor.UploadedAt && x.Id.CompareTo(decodedCursor.Id) < 0));
+            }
+
+            rows = await batches
+                .OrderByDescending(x => x.UploadedAt)
+                .ThenByDescending(x => x.Id)
+                .Take(limit + 1)
+                .ToListAsync(cancellationToken);
+        }
+
+        var hasMore = rows.Count > limit;
+        var pageRows = hasMore ? rows.Take(limit).ToArray() : rows.ToArray();
+        var errorsByBatch = await ReadErrorsForBatchesAsync(
+            db,
+            pageRows.Select(x => x.Id).ToArray(),
+            cancellationToken);
+        var items = pageRows
+            .Select(batch => ToResult(
+                batch,
+                errorsByBatch.TryGetValue(batch.Id, out var errors) ? errors : []))
+            .ToArray();
+
+        return new CursorPage<ImportResult>
+        {
+            Items = items,
+            NextCursor = hasMore && pageRows.Length > 0
+                ? ImportCursorCodec.Encode(pageRows[^1].UploadedAt.ToUniversalTime(), pageRows[^1].Id, tenant.TenantId)
+                : null,
+            HasMore = hasMore,
+            Limit = limit
+        };
+    }
+
     public async Task<ImportResult?> GetResultAsync(
         AdPulseDbContext db,
         TenantContext tenant,
@@ -355,6 +428,30 @@ public sealed class ImportWorkflow
             .Select(x => new ImportRowRejection(x.RowNumber, x.ErrorCode, x.Message))
             .ToArrayAsync(cancellationToken);
 
+    private static async Task<Dictionary<Guid, IReadOnlyList<ImportRowRejection>>> ReadErrorsForBatchesAsync(
+        AdPulseDbContext db,
+        Guid[] batchIds,
+        CancellationToken cancellationToken)
+    {
+        if (batchIds.Length == 0)
+        {
+            return [];
+        }
+
+        var errors = await db.ImportRowErrors
+            .AsNoTracking()
+            .Where(x => batchIds.Contains(x.ImportBatchId))
+            .OrderBy(x => x.RowNumber)
+            .Select(x => new { x.ImportBatchId, Rejection = new ImportRowRejection(x.RowNumber, x.ErrorCode, x.Message) })
+            .ToArrayAsync(cancellationToken);
+
+        return errors
+            .GroupBy(x => x.ImportBatchId)
+            .ToDictionary(
+                group => group.Key,
+                IReadOnlyList<ImportRowRejection> (group) => group.Select(x => x.Rejection).ToArray());
+    }
+
     private static void AddRejection(
         IDictionary<int, ImportRowRejection> rejections,
         int rowNumber,
@@ -366,7 +463,14 @@ public sealed class ImportWorkflow
         new(rowNumber, code, message);
 
     private static ImportResult ToResult(ImportBatch batch, IReadOnlyList<ImportRowRejection> errors) =>
-        new(batch.Id, batch.FileName, batch.UploadedAt, batch.Status, batch.AcceptedRows, batch.RejectedRows, errors);
+        new(
+            batch.Id,
+            batch.FileName,
+            batch.UploadedAt.ToUniversalTime(),
+            batch.Status,
+            batch.AcceptedRows,
+            batch.RejectedRows,
+            errors);
 
     private static string SafeFileName(string? fileName)
     {
@@ -385,9 +489,89 @@ public sealed class ImportWorkflow
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(tenant);
-        if (db.Scope.IsSystemScope || !string.Equals(db.Scope.TenantId, tenant.TenantId, StringComparison.Ordinal))
+        if (db.Scope.IsSystemScope
+            || string.IsNullOrWhiteSpace(tenant.TenantId)
+            || !string.Equals(db.Scope.TenantId, tenant.TenantId, StringComparison.Ordinal))
         {
             throw new SecurityException("The import context is outside the authorized tenant.");
+        }
+    }
+
+    private static bool IsAfterCursor(ImportBatch batch, ImportCursor? cursor)
+    {
+        if (cursor is null)
+        {
+            return true;
+        }
+
+        var uploadedAt = batch.UploadedAt.ToUniversalTime();
+        return uploadedAt < cursor.UploadedAt
+            || (uploadedAt == cursor.UploadedAt && batch.Id.CompareTo(cursor.Id) < 0);
+    }
+
+    private sealed record ImportCursor(DateTimeOffset UploadedAt, Guid Id, string TenantId);
+
+    private static class ImportCursorCodec
+    {
+        private const int MaxCursorLength = 512;
+
+        public static string Encode(DateTimeOffset uploadedAt, Guid id, string tenantId)
+        {
+            var json = JsonSerializer.SerializeToUtf8Bytes(new ImportCursor(uploadedAt.ToUniversalTime(), id, tenantId));
+            return Convert.ToBase64String(json)
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+        }
+
+        public static ImportCursor? Decode(string? encoded, string expectedTenantId)
+        {
+            if (encoded is null)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(encoded) || encoded.Length > MaxCursorLength)
+            {
+                throw new ImportValidationException("invalid_cursor", "The import cursor is invalid.");
+            }
+
+            try
+            {
+                var base64 = encoded.Replace('-', '+').Replace('_', '/');
+                base64 += (base64.Length % 4) switch
+                {
+                    0 => string.Empty,
+                    2 => "==",
+                    3 => "=",
+                    _ => throw new FormatException()
+                };
+
+                var cursor = JsonSerializer.Deserialize<ImportCursor>(Convert.FromBase64String(base64));
+                if (cursor is null
+                    || cursor.Id == Guid.Empty
+                    || cursor.UploadedAt == default
+                    || cursor.UploadedAt.Offset != TimeSpan.Zero
+                    || string.IsNullOrWhiteSpace(cursor.TenantId))
+                {
+                    throw new FormatException();
+                }
+
+                if (!string.Equals(cursor.TenantId, expectedTenantId, StringComparison.Ordinal))
+                {
+                    throw new ImportValidationException("invalid_cursor", "The import cursor is invalid for this tenant.");
+                }
+
+                return cursor;
+            }
+            catch (FormatException)
+            {
+                throw new ImportValidationException("invalid_cursor", "The import cursor is invalid.");
+            }
+            catch (JsonException)
+            {
+                throw new ImportValidationException("invalid_cursor", "The import cursor is invalid.");
+            }
         }
     }
 

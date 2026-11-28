@@ -49,6 +49,11 @@ const onGlobalKeydown = (event: KeyboardEvent) => {
   }
 }
 
+const onSearch = (query: string) => {
+  searchOpen.value = false
+  emit('search', query)
+}
+
 onMounted(() => document.addEventListener('keydown', onGlobalKeydown))
 onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKeydown))
 </script>
@@ -83,7 +88,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKeydown))
     <AppSearchCommand
       :open="searchOpen"
       @update:open="searchOpen = $event"
-      @search="emit('search', $event)"
+      @search="onSearch"
     />
     <main class="app-shell__main" aria-label="Workspace content">
       <slot />

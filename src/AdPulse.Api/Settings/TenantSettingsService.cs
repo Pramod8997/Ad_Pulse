@@ -27,7 +27,7 @@ public interface ITenantSettingsStore
 
 public sealed class TenantSettingsService
 {
-    private const string TenantAdminRole = "tenant-admin";
+    private static readonly string[] TenantAdminRoles = ["tenant-admin", "tenant_admin"];
     private readonly ITenantSettingsStore _store;
 
     public TenantSettingsService(ITenantSettingsStore store)
@@ -91,11 +91,16 @@ public sealed class TenantSettingsService
         }
     }
 
+    internal static bool IsTenantAdmin(TenantContext? tenant) =>
+        tenant is not null
+        && !string.IsNullOrWhiteSpace(tenant.TenantId)
+        && !string.IsNullOrWhiteSpace(tenant.SubjectId)
+        && tenant.Roles.Any(role => TenantAdminRoles.Any(adminRole => string.Equals(role, adminRole, StringComparison.OrdinalIgnoreCase)));
+
     private static void RequireTenantAdmin(TenantContext? tenant)
     {
         EnsureTenant(tenant);
-        var validatedTenant = tenant!;
-        if (!validatedTenant.Roles.Any(role => string.Equals(role, TenantAdminRole, StringComparison.OrdinalIgnoreCase)))
+        if (!IsTenantAdmin(tenant))
         {
             throw new TenantAccessDeniedException("The tenant-admin role is required for tenant settings.");
         }

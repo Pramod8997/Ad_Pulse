@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { AlertApiError, createAlertApi } from '../components/alerts/alertApi'
 import AlertSeverityBadge from '../components/alerts/AlertSeverityBadge.vue'
 import AlertStatusBadge from '../components/alerts/AlertStatusBadge.vue'
@@ -31,6 +32,8 @@ import type {
 
 const props = defineProps<{ api?: AlertApi }>()
 const api = props.api ?? createAlertApi()
+const route = useRoute()
+const router = useRouter()
 
 const filters = reactive<AlertFilters>({
   status: '',
@@ -44,6 +47,9 @@ const filters = reactive<AlertFilters>({
 })
 const appliedFilters = ref<AlertFilters>({ ...filters })
 const response = ref<AlertListResponse | null>(null)
+const cursors = ref<Record<number, string>>({})
+const currentPage = ref(1)
+const hasMore = ref(false)
 const alerts = computed(() => response.value?.items ?? [])
 const listLoading = ref(true)
 const listError = ref<string | null>(null)
@@ -152,9 +158,12 @@ function formatConfidence(value: number | null): string {
   return Math.max(0, Math.min(1, value)).toFixed(2)
 }
 
-function openDetail(alert: AlertSummary): void {
-  previousFocus.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  selectedId.value = alert.id
+function queryAlertId(value: unknown): string | null {
+  const candidate = Array.isArray(value) ? value[0] : value
+  return typeof candidate === 'string' && candidate.trim() !== '' ? candidate.trim() : null
+}
+
+function resetDetailState(): void {
   selectedAlert.value = null
   ownerDraft.value = ''
   noteDraft.value = ''
@@ -162,14 +171,24 @@ function openDetail(alert: AlertSummary): void {
   noteError.value = null
   detailError.value = null
   mutationMessage.value = null
-  window.history.replaceState({}, '', `${window.location.pathname}?alert=${encodeURIComponent(alert.id)}`)
+  pendingAction.value = null
+}
+
+function openDetail(alert: AlertSummary): void {
+  previousFocus.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  resetDetailState()
+  selectedId.value = alert.id
+  router.replace({ query: { ...route.query, alert: alert.id } })
 }
 
 function closeDetail(): void {
   selectedId.value = null
   selectedAlert.value = null
   pendingAction.value = null
-  window.history.replaceState({}, '', window.location.pathname)
+  if (queryAlertId(route.query.alert)) {
+    const { alert: _removed, ...rest } = route.query
+    router.replace({ query: rest })
+  }
   nextTick(() => previousFocus.value?.focus())
 }
 
@@ -179,9 +198,13 @@ async function loadList(): Promise<void> {
   listError.value = null
   listLoading.value = true
   try {
-    const result = await api.list(appliedFilters.value)
+    const result = await api.list(appliedFilters.value, cursors.value[currentPage.value] ?? null)
     if (requestId !== listRequest.value) return
     response.value = result
+    hasMore.value = result.hasMore
+    if (result.nextCursor) {
+      cursors.value[currentPage.value + 1] = result.nextCursor
+    }
     listCorrelationId.value = result.correlationId
   } catch (error) {
     if (requestId !== listRequest.value) return
@@ -190,6 +213,13 @@ async function loadList(): Promise<void> {
   } finally {
     if (requestId === listRequest.value) listLoading.value = false
   }
+}
+
+function goToPage(nextPage: number): void {
+  if (listLoading.value || nextPage < 1 || nextPage === currentPage.value) return
+  if (nextPage > currentPage.value && !hasMore.value) return
+  currentPage.value = nextPage
+  loadList()
 }
 
 async function loadDetail(id: string): Promise<void> {
@@ -212,6 +242,9 @@ async function loadDetail(id: string): Promise<void> {
 
 function submitFilters(): void {
   appliedFilters.value = cloneFilters(filters)
+  currentPage.value = 1
+  cursors.value = {}
+  hasMore.value = false
   loadList()
 }
 
@@ -342,7 +375,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 function trapFocus(event: KeyboardEvent, container: HTMLElement | null): void {
   if (!container) return
-  const focusable = Array.from(container.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+  const focusable = Array.from(container.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'))
   if (!focusable.length) return
   const first = focusable[0]
   const last = focusable[focusable.length - 1]
@@ -356,17 +389,35 @@ function trapFocus(event: KeyboardEvent, container: HTMLElement | null): void {
 }
 
 onMounted(() => {
-  const initialId = new URLSearchParams(window.location.search).get('alert')
   window.addEventListener('keydown', handleKeydown)
   loadList()
-  if (initialId) selectedId.value = initialId
 })
 
 onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
 watch(selectedId, (id) => {
   if (id) loadDetail(id)
-})
+}, { immediate: true })
+
+watch(
+  () => queryAlertId(route.query.alert),
+  (alertId) => {
+    if (alertId) {
+      if (alertId !== selectedId.value) {
+        if (!selectedId.value) {
+          previousFocus.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        }
+        resetDetailState()
+        selectedId.value = alertId
+      }
+    } else if (selectedId.value) {
+      selectedId.value = null
+      selectedAlert.value = null
+      pendingAction.value = null
+    }
+  },
+  { immediate: true },
+)
 
 watch(pendingAction, (action) => {
   if (action) nextTick(() => dialogRef.value?.querySelector<HTMLElement>('#mutation-reason')?.focus())
@@ -498,6 +549,29 @@ watch(pendingAction, (action) => {
         </table>
         <p v-if="listError" class="inline-error" role="alert">{{ listError }} <span v-if="listCorrelationId">Correlation ID: {{ listCorrelationId }}</span></p>
       </div>
+      <nav v-if="alerts.length > 0 || currentPage > 1" class="pagination" aria-label="Incident queue pages">
+        <p aria-live="polite">Page {{ currentPage }}</p>
+        <div class="pagination-actions">
+          <button
+            class="button button-secondary"
+            type="button"
+            :disabled="listLoading || currentPage <= 1"
+            aria-label="Go to previous incident page"
+            @click="goToPage(currentPage - 1)"
+          >
+            Previous
+          </button>
+          <button
+            class="button button-secondary"
+            type="button"
+            :disabled="listLoading || !hasMore"
+            aria-label="Go to next incident page"
+            @click="goToPage(currentPage + 1)"
+          >
+            Next
+          </button>
+        </div>
+      </nav>
     </section>
 
     <aside v-if="selectedId" ref="drawerRef" class="detail-drawer" role="dialog" aria-modal="true" aria-labelledby="alert-detail-heading">
@@ -529,7 +603,24 @@ watch(pendingAction, (action) => {
 
          <section class="detail-section" aria-labelledby="context-heading">
            <h3 id="context-heading">Incident context</h3>
-           <dl class="context-list"><div><dt>Campaign</dt><dd>{{ selectedAlert.campaignName ?? selectedAlert.campaignId ?? 'Missing' }}</dd></div><div><dt>Metric</dt><dd>{{ selectedAlert.metricName ?? 'Missing' }}</dd></div><div><dt>Rule ID</dt><dd>{{ selectedAlert.ruleId ?? 'Unavailable' }}</dd></div><div><dt>Scoring version</dt><dd>{{ selectedAlert.scoringVersion ?? 'Unavailable' }}</dd></div></dl>
+           <dl class="context-list">
+             <div>
+               <dt>Campaign</dt>
+               <dd>
+                 <RouterLink
+                   v-if="selectedAlert.campaignId"
+                   class="context-link"
+                   :to="'/app/campaigns/' + encodeURIComponent(selectedAlert.campaignId)"
+                 >
+                   {{ selectedAlert.campaignName ?? selectedAlert.campaignId }}
+                 </RouterLink>
+                 <template v-else>{{ selectedAlert.campaignName ?? 'Missing' }}</template>
+               </dd>
+             </div>
+             <div><dt>Metric</dt><dd>{{ selectedAlert.metricName ?? 'Missing' }}</dd></div>
+             <div><dt>Rule ID</dt><dd>{{ selectedAlert.ruleId ?? 'Unavailable' }}</dd></div>
+             <div><dt>Scoring version</dt><dd>{{ selectedAlert.scoringVersion ?? 'Unavailable' }}</dd></div>
+           </dl>
          </section>
 
          <section class="detail-section" aria-labelledby="ownership-heading">
@@ -656,6 +747,12 @@ tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 .alert-id, .metric-baseline { color: var(--text-secondary, #667085); font-size: 12px; margin-top: 4px; }
 .metric-value { font-variant-numeric: tabular-nums; }
 .inline-error { color: var(--danger, #b42318); font-size: 13px; margin: 0; padding: 12px 16px; }
+.pagination { align-items: center; border-top: 1px solid var(--border, #e4e7ec); color: var(--text-secondary, #667085); display: flex; font-size: 13px; gap: 16px; justify-content: space-between; padding: 14px 20px; }
+.pagination p { margin: 0; }
+.pagination-actions { display: flex; gap: 8px; }
+.context-link { border-radius: 3px; color: var(--accent, #176b64); font-weight: 600; text-decoration: none; }
+.context-link:hover { text-decoration: underline; }
+.context-link:focus-visible { outline: 3px solid var(--focus, #2e90fa); outline-offset: 2px; }
 .state-block { align-items: flex-start; display: flex; flex-direction: column; gap: 8px; min-height: 230px; justify-content: center; margin: 0 auto; max-width: 440px; padding: 38px 24px; text-align: left; }
 .state-block > svg { color: var(--text-secondary, #667085); }
 .state-block p { margin-bottom: 0; }
@@ -734,6 +831,9 @@ dd small { color: var(--text-secondary, #667085); display: block; font-size: 11p
   .context-list dd { text-align: left; }
   .dialog-actions { flex-direction: column-reverse; }
   .dialog-actions .button { width: 100%; }
+  .pagination { align-items: stretch; flex-direction: column; padding: 14px 16px; }
+  .pagination-actions { width: 100%; }
+  .pagination-actions .button { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
 </style>

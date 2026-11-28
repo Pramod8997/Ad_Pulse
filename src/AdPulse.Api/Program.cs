@@ -98,6 +98,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 app.MapOverviewEndpoints();
 app.MapCampaignEndpoints();
 app.MapMetricEndpoints();
+app.MapScoringEndpoints();
 app.MapImportEndpoints();
 app.MapAlertEndpoints();
 app.MapAuditEndpoints();

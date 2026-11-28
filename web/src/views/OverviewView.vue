@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import BudgetPacingPanel from '@/components/overview/BudgetPacingPanel.vue'
 import CampaignPerformanceTable from '@/components/overview/CampaignPerformanceTable.vue'
 import KpiStrip from '@/components/overview/KpiStrip.vue'
@@ -23,7 +24,9 @@ function dateDaysAgo(days: number): string {
 
 const from = ref(dateDaysAgo(29))
 const to = ref(isoDate(new Date()))
-const query = useOverviewQuery({ from, to })
+const currencyDraft = ref('')
+const appliedCurrency = ref<string | null>(null)
+const query = useOverviewQuery({ from, to, currency: appliedCurrency })
 const isLoading = computed(() => query.isLoading.value)
 const isError = computed(() => query.isError.value)
 const isFetching = computed(() => query.isFetching.value)
@@ -34,6 +37,12 @@ const hasData = computed(() => Boolean(data.value && (
   data.value.kpis.length || data.value.trend.length || data.value.budgetPacing.length || data.value.alerts.length || data.value.campaigns.length
 )))
 const isEmpty = computed(() => Boolean(data.value && !hasData.value))
+const isCurrencyScopeRequired = computed(() => {
+  const error = query.error.value as { message?: string; problem?: { detail?: string; type?: string; title?: string } } | null
+  if (!error) return false
+  const text = `${error.message ?? ''} ${error.problem?.detail ?? ''} ${error.problem?.type ?? ''} ${error.problem?.title ?? ''}`
+  return text.includes('currency_scope_required')
+})
 const errorMessage = computed(() => {
   const error = query.error.value as { message?: string } | null
   return error?.message || 'The overview could not be loaded. Try again or contact support.'
@@ -78,30 +87,86 @@ function formatUpdated(value: string | null): string {
   return Number.isNaN(date.valueOf()) ? 'Last refresh unavailable' : `Last refreshed ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)}`
 }
 
-function refresh() { return query.refetch() }
+function applyCurrencyScope() {
+  const normalized = currencyDraft.value.trim().toUpperCase()
+  appliedCurrency.value = normalized || null
+  currencyDraft.value = normalized
+}
+
+function clearCurrencyScope() {
+  currencyDraft.value = ''
+  appliedCurrency.value = null
+}
+
+function refresh() {
+  applyCurrencyScope()
+  return query.refetch()
+}
 </script>
 
 <template>
   <main class="overview-page">
     <header class="overview-page__header">
       <div>
-        <p class="overview-page__eyebrow">Workspace overview</p>
+        <p class="overview-page__eyebrow">Operations overview</p>
         <h1>Overview</h1>
         <p class="overview-page__period">{{ from && to ? `${formatPeriod(from)} – ${formatPeriod(to)}` : 'Select a reporting period' }} · {{ timezone }}</p>
+        <div class="overview-quick-actions" aria-label="Operations shortcuts">
+          <RouterLink class="overview-quick-link" to="/app/alerts">Incident inbox</RouterLink>
+          <RouterLink class="overview-quick-link" to="/app/campaigns">Campaigns</RouterLink>
+        </div>
       </div>
       <form class="overview-filters" aria-label="Overview reporting period" @submit.prevent="refresh">
         <label>From <input v-model="from" type="date" :max="to || undefined" /></label>
         <label>To <input v-model="to" type="date" :min="from || undefined" :max="isoDate(new Date())" /></label>
+        <label v-if="isCurrencyScopeRequired || appliedCurrency">
+          Currency
+          <input
+            v-model="currencyDraft"
+            type="text"
+            maxlength="3"
+            placeholder="USD"
+            list="overview-currency-options"
+            aria-label="Currency scope"
+          />
+        </label>
         <button type="submit" class="overview-button overview-button--primary" :disabled="isFetching">Refresh</button>
+        <button v-if="appliedCurrency" type="button" class="overview-button" :disabled="isFetching" @click="clearCurrencyScope">Clear currency</button>
+        <datalist id="overview-currency-options">
+          <option value="USD" />
+          <option value="EUR" />
+          <option value="GBP" />
+        </datalist>
       </form>
     </header>
 
     <div class="overview-page__meta" aria-live="polite">
       <span>{{ formatUpdated(lastUpdated) }}</span>
+      <span v-if="appliedCurrency">Scoped to {{ appliedCurrency }}</span>
       <span v-if="stale" class="overview-page__stale">Updating from the server…</span>
     </div>
 
     <OverviewState v-if="isLoading" kind="loading" />
+    <section v-else-if="isError && isCurrencyScopeRequired && !data" class="overview-currency-panel" role="alert">
+      <h2>Currency scope required</h2>
+      <p>This workspace contains campaigns in multiple currencies. Enter a 3-letter ISO currency code to view aggregated spend and efficiency metrics.</p>
+      <form class="overview-currency-form" @submit.prevent="applyCurrencyScope">
+        <label for="overview-currency-scope">
+          <span>Campaign currency</span>
+          <input
+            id="overview-currency-scope"
+            v-model="currencyDraft"
+            type="text"
+            maxlength="3"
+            placeholder="USD"
+            list="overview-currency-options"
+            required
+          />
+        </label>
+        <button type="submit" class="overview-button overview-button--primary" :disabled="isFetching">Apply currency</button>
+      </form>
+      <p v-if="correlationId" class="overview-currency-panel__ref">Reference: {{ correlationId }}</p>
+    </section>
     <OverviewState v-else-if="isError && !data" kind="error" title="Overview unavailable" :message="errorMessage" :correlation-id="correlationId" :retry="refresh" />
     <OverviewState v-else-if="isEmpty" kind="empty" title="No overview data yet" message="There are no campaign metrics for this reporting period. Choose another period or add campaign metrics to begin." />
     <template v-else-if="data">
@@ -127,12 +192,22 @@ function refresh() { return query.refetch() }
 .overview-page__eyebrow { margin: 0 0 6px; color: var(--text-secondary, #667085); font-size: 13px; font-weight: 600; letter-spacing: .02em; }
 .overview-page h1 { margin: 0; font-size: clamp(24px, 3vw, 28px); line-height: 1.2; font-weight: 650; }
 .overview-page__period { margin: 7px 0 0; color: var(--text-secondary, #667085); font-size: 13px; }
+.overview-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.overview-quick-link { display: inline-flex; align-items: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--border, #e4e7ec); border-radius: 6px; background: var(--surface, #fff); color: var(--accent, #176b64); font-size: 13px; font-weight: 600; text-decoration: none; }
+.overview-quick-link:hover { background: var(--surface-subtle, #f8fafc); border-color: color-mix(in srgb, var(--accent, #176b64) 35%, var(--border, #e4e7ec)); }
+.overview-quick-link:focus-visible, .overview-currency-form input:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #2e90fa) 45%, transparent); outline-offset: 2px; }
 .overview-filters { display: flex; align-items: end; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .overview-filters label { display: grid; gap: 5px; color: var(--text-secondary, #667085); font-size: 12px; font-weight: 600; }
-.overview-filters input { min-height: 40px; padding: 7px 10px; border: 1px solid var(--border, #e4e7ec); border-radius: 6px; background: var(--surface, #fff); color: var(--text-primary, #182230); font: inherit; }
+.overview-filters input, .overview-currency-form input { min-height: 40px; padding: 7px 10px; border: 1px solid var(--border, #e4e7ec); border-radius: 6px; background: var(--surface, #fff); color: var(--text-primary, #182230); font: inherit; }
 .overview-filters input:focus-visible, .overview-button:focus-visible, .overview-link:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #2e90fa) 45%, transparent); outline-offset: 2px; }
 .overview-page__meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--text-secondary, #667085); font-size: 12px; }
 .overview-page__stale { color: var(--warning, #a15c07); }
+.overview-currency-panel { display: grid; gap: 10px; justify-items: start; padding: 22px 24px; border: 1px solid color-mix(in srgb, var(--warning, #a15c07) 35%, var(--border, #e4e7ec)); border-radius: 8px; background: var(--surface, #fff); }
+.overview-currency-panel h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.overview-currency-panel p { margin: 0; max-width: 64ch; color: var(--text-secondary, #667085); font-size: 14px; }
+.overview-currency-panel__ref { font-size: 12px; }
+.overview-currency-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 4px; }
+.overview-currency-form label { display: grid; gap: 5px; color: var(--text-secondary, #667085); font-size: 12px; font-weight: 600; }
 .overview-grid { display: grid; gap: 20px; }
 .overview-grid--primary { grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr); }
 .overview-notice { padding: 12px 14px; border: 1px solid var(--border, #e4e7ec); border-radius: 8px; font-size: 13px; }

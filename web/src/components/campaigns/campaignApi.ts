@@ -26,11 +26,30 @@ export interface CampaignWrite {
   endsOn: string;
 }
 
+export type CampaignSortField = 'createdAt' | 'name' | 'status' | 'budget';
+export type SortDirection = 'asc' | 'desc';
+
 export interface CampaignListFilters {
   search: string;
   status: string;
   startDate: string;
   endDate: string;
+  sort?: CampaignSortField;
+  direction?: SortDirection;
+}
+
+export interface DailyMetricWrite {
+  spend: number;
+  revenue: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+}
+
+export interface CampaignScoreResult {
+  alert?: unknown;
+  created?: boolean;
+  message?: string;
 }
 
 export interface CampaignListResult {
@@ -190,7 +209,7 @@ function getArray(value: unknown, keys: string[]): unknown[] {
   return [];
 }
 
-async function request<T>(path: string, options: { method?: 'POST' | 'PUT'; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PUT' | 'PATCH'; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   try {
     return await apiClient.request<T>(path, options);
   } catch (error) {
@@ -214,6 +233,8 @@ export async function listCampaigns(
   if (filters.status) params.set('status', filters.status);
   if (filters.startDate) params.set('startsOnFrom', filters.startDate);
   if (filters.endDate) params.set('endsOnTo', filters.endDate);
+  if (filters.sort) params.set('sort', filters.sort);
+  if (filters.direction) params.set('direction', filters.direction);
 
   const payload = await request<unknown>(`/app/campaigns?${params.toString()}`, { signal });
   const data = nestedData(payload);
@@ -240,9 +261,39 @@ export async function createCampaign(input: CampaignWrite): Promise<CampaignReco
 
 export async function updateCampaign(id: string, input: CampaignWrite): Promise<CampaignRecord> {
   return normalizeCampaign(await request<unknown>(`/app/campaigns/${encodeURIComponent(id)}`, {
-    method: 'PUT',
+    method: 'PATCH',
     body: input,
   }));
+}
+
+export async function upsertCampaignMetric(
+  campaignId: string,
+  metricDate: string,
+  input: DailyMetricWrite,
+): Promise<MetricPoint> {
+  const payload = await request<unknown>(
+    `/app/campaigns/${encodeURIComponent(campaignId)}/metrics/${encodeURIComponent(metricDate)}`,
+    {
+      method: 'PUT',
+      body: input,
+    },
+  );
+  return normalizeMetric(nestedData(payload));
+}
+
+export async function scoreCampaign(campaignId: string): Promise<CampaignScoreResult> {
+  const payload = await request<unknown>(`/app/campaigns/${encodeURIComponent(campaignId)}/score`, {
+    method: 'POST',
+  });
+  if (!isRecord(payload)) {
+    return {};
+  }
+  const data = nestedData(payload);
+  return {
+    alert: data.alert ?? payload.alert,
+    created: typeof data.created === 'boolean' ? data.created : undefined,
+    message: asNullableString(data.message) ?? undefined,
+  };
 }
 
 export async function getCampaignDetail(id: string, signal?: AbortSignal): Promise<CampaignDetailResult> {

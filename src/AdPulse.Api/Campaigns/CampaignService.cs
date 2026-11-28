@@ -29,6 +29,9 @@ public sealed class CampaignService
     {
         ThrowIfInvalid(CampaignValidation.Validate(query));
         var limit = query.Limit ?? 25;
+        var sort = CampaignValidation.NormalizedSort(query.Sort);
+        var direction = CampaignValidation.NormalizedDirection(query.Direction);
+        var isAscending = direction == "asc";
         var filterHash = CampaignCursorCodec.FilterHash(query);
         var campaigns = _db.Campaigns.AsNoTracking();
 
@@ -64,10 +67,13 @@ public sealed class CampaignService
             campaigns = campaigns.Where(c => c.EndsOn <= query.EndsOnTo.Value);
         }
 
+        CampaignCursor? decodedCursor = null;
         if (query.Cursor is not null)
         {
             if (!CampaignCursorCodec.TryDecode(query.Cursor, out var cursor)
-                || !string.Equals(cursor.FilterHash, filterHash, StringComparison.Ordinal))
+                || !string.Equals(cursor.FilterHash, filterHash, StringComparison.Ordinal)
+                || !string.Equals(cursor.Sort, sort, StringComparison.Ordinal)
+                || !string.Equals(cursor.Direction, direction, StringComparison.Ordinal))
             {
                 throw new CampaignValidationException(new Dictionary<string, string[]>
                 {
@@ -75,15 +81,22 @@ public sealed class CampaignService
                 });
             }
 
-            campaigns = campaigns.Where(c => c.CreatedAt < cursor.CreatedAt
-                || (c.CreatedAt == cursor.CreatedAt && c.Id.CompareTo(cursor.Id) < 0));
+            decodedCursor = cursor;
         }
 
-        var rows = await campaigns
-            .OrderByDescending(c => c.CreatedAt)
-            .ThenByDescending(c => c.Id)
-            .Take(limit + 1)
-            .ToListAsync(cancellationToken);
+        List<Campaign> rows;
+        if (_db.Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite")
+        {
+            // SQLite cannot translate DateTimeOffset or decimal ordering/comparisons; production SQL Server executes these server-side.
+            var candidates = await campaigns.ToListAsync(cancellationToken);
+            rows = ApplySqliteOrderingAndCursor(candidates, sort, isAscending, decodedCursor, limit);
+        }
+        else
+        {
+            campaigns = ApplySqlServerCursorFilter(campaigns, sort, isAscending, decodedCursor);
+            campaigns = ApplySqlServerOrdering(campaigns, sort, isAscending);
+            rows = await campaigns.Take(limit + 1).ToListAsync(cancellationToken);
+        }
 
         var hasMore = rows.Count > limit;
         if (hasMore)
@@ -92,16 +105,33 @@ public sealed class CampaignService
         }
 
         var nextCursor = hasMore && rows.Count > 0
-            ? CampaignCursorCodec.Encode(new CampaignCursor(rows[^1].CreatedAt, rows[^1].Id, filterHash))
+            ? EncodeNextCursor(rows[^1], filterHash, sort, direction)
             : null;
 
-        return new CampaignPage(rows.Select(CampaignDto.FromEntity).ToArray(), nextCursor, hasMore, limit);
+        var metricsByCampaign = await LoadMetricsByCampaignAsync(rows.Select(r => r.Id).ToArray(), cancellationToken);
+        var items = rows
+            .Select(campaign => metricsByCampaign.TryGetValue(campaign.Id, out var metrics)
+                ? CampaignDto.FromEntity(campaign, metrics)
+                : CampaignDto.FromEntity(campaign))
+            .ToArray();
+
+        return new CampaignPage(items, nextCursor, hasMore, limit);
     }
 
     public async Task<CampaignDto?> GetAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var campaign = await _db.Campaigns.AsNoTracking().SingleOrDefaultAsync(c => c.Id == id, cancellationToken);
-        return campaign is null ? null : CampaignDto.FromEntity(campaign);
+        if (campaign is null)
+        {
+            return null;
+        }
+
+        var metrics = await _db.DailyMetrics
+            .AsNoTracking()
+            .Where(m => m.CampaignId == campaign.Id)
+            .ToArrayAsync(cancellationToken);
+
+        return CampaignDto.FromEntity(campaign, metrics);
     }
 
     public async Task<CampaignDto> CreateAsync(CampaignWriteRequest request, CancellationToken cancellationToken = default)
@@ -158,4 +188,118 @@ public sealed class CampaignService
         .Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("%", "\\%", StringComparison.Ordinal)
         .Replace("_", "\\_", StringComparison.Ordinal);
+
+    private async Task<Dictionary<Guid, DailyMetric[]>> LoadMetricsByCampaignAsync(
+        Guid[] campaignIds,
+        CancellationToken cancellationToken)
+    {
+        if (campaignIds.Length == 0)
+        {
+            return [];
+        }
+
+        var metrics = await _db.DailyMetrics
+            .AsNoTracking()
+            .Where(m => campaignIds.Contains(m.CampaignId))
+            .ToListAsync(cancellationToken);
+
+        return metrics
+            .GroupBy(m => m.CampaignId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+    }
+
+    private static List<Campaign> ApplySqliteOrderingAndCursor(
+        List<Campaign> candidates,
+        string sort,
+        bool isAscending,
+        CampaignCursor? cursor,
+        int limit)
+    {
+        IEnumerable<Campaign> filtered = cursor is { } c
+            ? candidates.Where(x => CompareCampaignToCursor(x, sort, c) is var cmp && (isAscending ? cmp > 0 : cmp < 0))
+            : candidates;
+
+        IEnumerable<Campaign> ordered = (sort, isAscending) switch
+        {
+            ("name", true) => filtered.OrderBy(x => x.Name, StringComparer.Ordinal).ThenBy(x => x.Id),
+            ("name", false) => filtered.OrderByDescending(x => x.Name, StringComparer.Ordinal).ThenByDescending(x => x.Id),
+            ("status", true) => filtered.OrderBy(x => x.Status, StringComparer.Ordinal).ThenBy(x => x.Id),
+            ("status", false) => filtered.OrderByDescending(x => x.Status, StringComparer.Ordinal).ThenByDescending(x => x.Id),
+            ("budget", true) => filtered.OrderBy(x => x.Budget).ThenBy(x => x.Id),
+            ("budget", false) => filtered.OrderByDescending(x => x.Budget).ThenByDescending(x => x.Id),
+            (_, true) => filtered.OrderBy(x => x.CreatedAt.ToUniversalTime()).ThenBy(x => x.Id),
+            (_, false) => filtered.OrderByDescending(x => x.CreatedAt.ToUniversalTime()).ThenByDescending(x => x.Id)
+        };
+
+        return ordered.Take(limit + 1).ToList();
+    }
+
+    private static int CompareCampaignToCursor(Campaign campaign, string sort, CampaignCursor cursor)
+    {
+        var primary = sort switch
+        {
+            "name" => string.Compare(campaign.Name, cursor.TextKey, StringComparison.Ordinal),
+            "status" => string.Compare(campaign.Status, cursor.TextKey, StringComparison.Ordinal),
+            "budget" => campaign.Budget.CompareTo(cursor.BudgetKey!.Value),
+            _ => campaign.CreatedAt.ToUniversalTime().CompareTo(cursor.CreatedAt.ToUniversalTime())
+        };
+        return primary != 0 ? primary : campaign.Id.CompareTo(cursor.Id);
+    }
+
+    private static IQueryable<Campaign> ApplySqlServerCursorFilter(
+        IQueryable<Campaign> campaigns,
+        string sort,
+        bool isAscending,
+        CampaignCursor? cursor)
+    {
+        if (cursor is not { } c)
+        {
+            return campaigns;
+        }
+
+        return (sort, isAscending) switch
+        {
+            ("name", true) => campaigns.Where(x => x.Name.CompareTo(c.TextKey!) > 0
+                || (x.Name == c.TextKey! && x.Id.CompareTo(c.Id) > 0)),
+            ("name", false) => campaigns.Where(x => x.Name.CompareTo(c.TextKey!) < 0
+                || (x.Name == c.TextKey! && x.Id.CompareTo(c.Id) < 0)),
+            ("status", true) => campaigns.Where(x => x.Status.CompareTo(c.TextKey!) > 0
+                || (x.Status == c.TextKey! && x.Id.CompareTo(c.Id) > 0)),
+            ("status", false) => campaigns.Where(x => x.Status.CompareTo(c.TextKey!) < 0
+                || (x.Status == c.TextKey! && x.Id.CompareTo(c.Id) < 0)),
+            ("budget", true) => campaigns.Where(x => x.Budget > c.BudgetKey!.Value
+                || (x.Budget == c.BudgetKey!.Value && x.Id.CompareTo(c.Id) > 0)),
+            ("budget", false) => campaigns.Where(x => x.Budget < c.BudgetKey!.Value
+                || (x.Budget == c.BudgetKey!.Value && x.Id.CompareTo(c.Id) < 0)),
+            (_, true) => campaigns.Where(x => x.CreatedAt > c.CreatedAt
+                || (x.CreatedAt == c.CreatedAt && x.Id.CompareTo(c.Id) > 0)),
+            (_, false) => campaigns.Where(x => x.CreatedAt < c.CreatedAt
+                || (x.CreatedAt == c.CreatedAt && x.Id.CompareTo(c.Id) < 0))
+        };
+    }
+
+    private static IQueryable<Campaign> ApplySqlServerOrdering(
+        IQueryable<Campaign> campaigns,
+        string sort,
+        bool isAscending) => (sort, isAscending) switch
+        {
+            ("name", true) => campaigns.OrderBy(x => x.Name).ThenBy(x => x.Id),
+            ("name", false) => campaigns.OrderByDescending(x => x.Name).ThenByDescending(x => x.Id),
+            ("status", true) => campaigns.OrderBy(x => x.Status).ThenBy(x => x.Id),
+            ("status", false) => campaigns.OrderByDescending(x => x.Status).ThenByDescending(x => x.Id),
+            ("budget", true) => campaigns.OrderBy(x => x.Budget).ThenBy(x => x.Id),
+            ("budget", false) => campaigns.OrderByDescending(x => x.Budget).ThenByDescending(x => x.Id),
+            (_, true) => campaigns.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id),
+            (_, false) => campaigns.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+        };
+
+    private static string EncodeNextCursor(Campaign last, string filterHash, string sort, string direction) =>
+        CampaignCursorCodec.Encode(new CampaignCursor(
+            last.CreatedAt.ToUniversalTime(),
+            last.Id,
+            filterHash,
+            sort,
+            direction,
+            sort switch { "name" => last.Name, "status" => last.Status, _ => null },
+            sort == "budget" ? last.Budget : null));
 }

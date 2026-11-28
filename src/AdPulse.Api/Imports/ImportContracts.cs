@@ -31,11 +31,15 @@ public static class ImportContract
         "conversions"
     ];
 
-    public static bool HasImportPermission(TenantContext tenant) =>
-        tenant.IsInRole("tenant_admin")
-        || tenant.IsInRole("tenant-admin")
-        || tenant.IsInRole("importer")
-        || tenant.IsInRole("import");
+    public static bool HasImportPermission(TenantContext tenant)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        return tenant.Roles.Any(role =>
+            string.Equals(role, "tenant_admin", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(role, "tenant-admin", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(role, "importer", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(role, "import", StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 public sealed record ImportRowRejection(

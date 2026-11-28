@@ -10,7 +10,7 @@ import type {
   IncidentStatus,
   IncidentTimelineEntry,
 } from './types'
-import { apiClient, ApiClientError } from '../../api'
+import { apiClient, ApiClientError, ApiProblemError } from '../../api'
 
 const alertsPath = '/app/alerts'
 
@@ -172,7 +172,10 @@ function listValue(raw: unknown, response?: Response): AlertListResponse {
     lastSuccessfulRefresh: stringValue(first(envelope, 'lastSuccessfulRefresh', 'last_successful_refresh')),
     partial: first(envelope, 'partial', 'isPartial', 'is_partial') === true,
     stale: first(envelope, 'stale', 'isStale', 'is_stale') === true,
-    correlationId: response?.headers.get('x-correlation-id') ?? stringValue(first(envelope, 'correlationId', 'correlation_id')),
+    correlationId:
+      response?.headers.get('x-correlation-id')
+      ?? response?.headers.get('traceparent')
+      ?? stringValue(first(envelope, 'correlationId', 'correlation_id')),
   }
 }
 
@@ -207,20 +210,29 @@ async function readResponse(response: Response): Promise<unknown> {
 }
 
 async function request(base: string, path: string, init?: RequestInit): Promise<{ value: unknown; response: Response }> {
-  const response = await fetch(`${base}${path}`, {
-    credentials: 'include',
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${base}${path}`, {
+      credentials: 'include',
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init?.headers,
+      },
+    })
+  } catch {
+    throw new AlertApiError('The API could not be reached.', 0, null)
+  }
   const value = await readResponse(response)
   if (!response.ok) {
     const error = asObject(value)
-    const message = stringValue(first(error, 'title', 'detail', 'message')) ?? `Alert request failed (${response.status})`
-    throw new AlertApiError(message, response.status, response.headers.get('x-correlation-id') ?? stringValue(first(error, 'correlationId', 'correlation_id')))
+    const message = stringValue(first(error, 'detail', 'title', 'message')) ?? `Alert request failed (${response.status})`
+    const correlationId =
+      response.headers.get('x-correlation-id')
+      ?? response.headers.get('traceparent')
+      ?? stringValue(first(error, 'correlationId', 'correlation_id'))
+    throw new AlertApiError(message, response.status, correlationId)
   }
   return { value, response }
 }
@@ -229,6 +241,10 @@ async function sharedRequest(path: string, options: { method?: 'GET' | 'POST' | 
   try {
     return await apiClient.request<unknown>(path, options)
   } catch (error) {
+    if (error instanceof ApiProblemError) {
+      const message = stringValue(error.problem.detail) ?? stringValue(error.problem.title) ?? error.message
+      throw new AlertApiError(message, error.status ?? error.problem.status ?? 0, error.correlationId)
+    }
     if (error instanceof ApiClientError) {
       throw new AlertApiError(error.message, error.status ?? 0, error.correlationId)
     }
@@ -236,66 +252,51 @@ async function sharedRequest(path: string, options: { method?: 'GET' | 'POST' | 
   }
 }
 
+function unwrapDetail(value: unknown): AlertDetail | null {
+  if (value === null || value === undefined) return null
+  const payload = asObject(value)
+  return detailValue(first(payload, 'alert', 'data') ?? value)
+}
+
 export function createAlertApi(baseUrl?: string): AlertApi {
   const base = apiBase(baseUrl)
   const useSharedClient = baseUrl === undefined
+
+  async function send(path: string, options?: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown }): Promise<{ value: unknown; response?: Response }> {
+    if (useSharedClient) {
+      return { value: await sharedRequest(path, options) }
+    }
+    return request(base, path, {
+      method: options?.method,
+      body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+    })
+  }
+
   return {
     async list(filters, cursor) {
-      if (useSharedClient) return listValue(await sharedRequest(`${alertsPath}${queryString(filters, cursor)}`))
-      const result = await request(base, `${alertsPath}${queryString(filters, cursor)}`)
+      const result = await send(`${alertsPath}${queryString(filters, cursor)}`)
       return listValue(result.value, result.response)
     },
     async get(id) {
-      if (useSharedClient) {
-        const value = await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}`)
-        const payload = asObject(value)
-        return detailValue(first(payload, 'alert', 'data') ?? value)
-      }
-      const result = await request(base, `${alertsPath}/${encodeURIComponent(id)}`)
+      const result = await send(`${alertsPath}/${encodeURIComponent(id)}`)
       const payload = asObject(result.value)
       return detailValue(first(payload, 'alert', 'data') ?? result.value)
     },
     async mutate(id, action, reason) {
-      if (useSharedClient) {
-        const value = await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: { confirm: true, reason } })
-        if (value === null) return null
-        const payload = asObject(value)
-        return detailValue(first(payload, 'alert', 'data') ?? value)
-      }
-      const result = await request(base, `${alertsPath}/${encodeURIComponent(id)}/${action}`, {
-        method: 'POST',
-        body: JSON.stringify({ confirm: true, reason }),
-      })
-      if (result.value === null) return null
-      const payload = asObject(result.value)
-      return detailValue(first(payload, 'alert', 'data') ?? result.value)
+      const result = await send(`${alertsPath}/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: { confirm: true, reason } })
+      return unwrapDetail(result.value)
     },
     async changeIncident(id, status, summary) {
-      const body = { status, summary, confirm: true }
-      const value = useSharedClient
-        ? await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/incident`, { method: 'PATCH', body })
-        : (await request(base, `${alertsPath}/${encodeURIComponent(id)}/incident`, { method: 'PATCH', body: JSON.stringify(body) })).value
-      if (value === null) return null
-      const payload = asObject(value)
-      return detailValue(first(payload, 'alert', 'data') ?? value)
+      const result = await send(`${alertsPath}/${encodeURIComponent(id)}/incident`, { method: 'PATCH', body: { status, summary, confirm: true } })
+      return unwrapDetail(result.value)
     },
     async assign(id, ownerSubjectId) {
-      const body = { ownerSubjectId, confirm: true }
-      const value = useSharedClient
-        ? await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/assignment`, { method: 'PATCH', body })
-        : (await request(base, `${alertsPath}/${encodeURIComponent(id)}/assignment`, { method: 'PATCH', body: JSON.stringify(body) })).value
-      if (value === null) return null
-      const payload = asObject(value)
-      return detailValue(first(payload, 'alert', 'data') ?? value)
+      const result = await send(`${alertsPath}/${encodeURIComponent(id)}/assignment`, { method: 'PATCH', body: { ownerSubjectId, confirm: true } })
+      return unwrapDetail(result.value)
     },
     async addNote(id, note) {
-      const body = { note }
-      const value = useSharedClient
-        ? await sharedRequest(`${alertsPath}/${encodeURIComponent(id)}/notes`, { method: 'POST', body })
-        : (await request(base, `${alertsPath}/${encodeURIComponent(id)}/notes`, { method: 'POST', body: JSON.stringify(body) })).value
-      if (value === null) return null
-      const payload = asObject(value)
-      return detailValue(first(payload, 'alert', 'data') ?? value)
+      const result = await send(`${alertsPath}/${encodeURIComponent(id)}/notes`, { method: 'POST', body: { note } })
+      return unwrapDetail(result.value)
     },
   }
 }

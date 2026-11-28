@@ -1,4 +1,5 @@
 using System.Text;
+using AdPulse.Api.Contracts;
 using AdPulse.Domain.Tenancy;
 using AdPulse.Infrastructure.Data;
 using Microsoft.AspNetCore.Http;
@@ -23,10 +24,39 @@ public static class ImportEndpoints
                     ImportContract.TemplateFileName)
                 : Results.Forbid());
 
+        group.MapGet("", ListAsync);
         group.MapPost("", UploadAsync);
         group.MapPost("/{importBatchId:guid}/confirm", ConfirmAsync);
         group.MapGet("/{importBatchId:guid}", GetResultAsync);
         return endpoints;
+    }
+
+    private static async Task<IResult> ListAsync(
+        string? cursor,
+        int? limit,
+        AdPulseDbContext db,
+        TenantContext tenant,
+        CancellationToken cancellationToken)
+    {
+        if (!ImportContract.HasImportPermission(tenant))
+        {
+            return Results.Forbid();
+        }
+
+        try
+        {
+            var page = await new ImportWorkflow().ListAsync(
+                db,
+                tenant,
+                cursor,
+                limit ?? PageQuery.DefaultLimit,
+                cancellationToken);
+            return Results.Ok(page);
+        }
+        catch (ImportValidationException exception)
+        {
+            return Results.BadRequest(new { code = exception.Code, message = exception.Message });
+        }
     }
 
     private static async Task<IResult> UploadAsync(
